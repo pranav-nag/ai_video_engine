@@ -51,18 +51,48 @@ def check_dependencies():
 
 
 def check_ollama():
-    """Check if Ollama is installed and running."""
+    """Check if Ollama is installed and running. If not running, start it."""
+    import subprocess
+    import socket
+
+    def is_ollama_running():
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+            return s.connect_ex(("localhost", 11434)) == 0
+
     if shutil.which("ollama") is None:
         print_status("⚠️  WARNING: 'ollama' not found in PATH.")
         print_status("    The AI features (Llama 3.2) require Ollama.")
         print_status("    Opening download page...")
         try:
             webbrowser.open("https://ollama.com/download")
-        except:
+        except Exception:
             pass
         time.sleep(2)
     else:
-        print_status("✅ Ollama found.")
+        if not is_ollama_running():
+            print_status("🤖 Ollama found but not running. Starting service...")
+            # Start ollama serve in a background process
+            try:
+                # On Windows, we can use CREATE_NO_WINDOW if we want it totally hidden
+                # but 'ollama serve' usually stays open.
+                subprocess.Popen(
+                    ["ollama", "serve"],
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                    creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
+                )
+                print_status("⏳ Waiting for Ollama to initialize...")
+                # Wait up to 10 seconds for it to start
+                for _ in range(10):
+                    if is_ollama_running():
+                        print_status("✅ Ollama is now running.")
+                        return
+                    time.sleep(1)
+                print_status("⚠️  Ollama taking longer than expected to start.")
+            except Exception as e:
+                print_status(f"❌ Failed to start Ollama automatically: {e}")
+        else:
+            print_status("✅ Ollama is running.")
 
 
 def check_and_download_model():

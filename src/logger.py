@@ -91,7 +91,9 @@ class VideoLogger:
         self.log(message, "INFO", color)
 
     def error(self, message, color=None):
-        self.log(message, "ERROR", color)
+        import traceback
+
+        self.log(f"{message}\n{traceback.format_exc()}", "ERROR", color)
 
     def warning(self, message, color=None):
         self.log(message, "WARNING", color)

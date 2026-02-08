@@ -1,68 +1,97 @@
-### STATUS UPDATE (2026-02-08)
+### ✅ COMPLETED FEATURES (2026-02-08)
 
-✅ **yt-dlp Resolution Control**: Added a dropdown to the UI (360p, 720p, 1080p).
-✅ **ETA & Informative Logs**: Added real-time ETA calculation and refined JetBrains Mono logs.
-✅ **UI Revamp**: Upgraded to "AI ENGINE PRO" dark mode with fixed alignments and premium icons.
-✅ **Icon Update**: Changed from the "Fish" to a more professional `AUTO_AWESOME`/`MOVIE_FILTER` set.
-✅ **Hide CMD/PowerShell**: 
-   - Ollama now starts in a `Hidden` window via PowerShell backgrounding.
-   - Added `launch_hidden.vbs` to run the entire app without a console window.
-✅ **Smart Crop Progress Bar**: Added a `ProgressBar` linked to frame-by-frame analysis.
-✅ **CPU Optimization**: 
-   - Implemented Multi-threaded frame processing in `cropper.py`.
-   - Now utilizes ~12+ threads on the Ryzen 7 for 5x faster analysis.
-✅ **Selective Analysis**: Users can now pick a specific minute/second range to process.
+#### **1. UI & Experience (Overhauled)**
+- ✅ **Cockpit Layout**: Revamped to a 2-column "Pro Workstation" layout (Wider Sidebar + Responsive Right Panel).
+- ✅ **Live Intelligence**: Dedicated "Live Logs" console with real-time ETA and process tracking.
+- ✅ **Project Library**: Integrated visual gallery showing thumbnails, scores, and hooks in the right panel.
+- ✅ **Modern Aesthetics**: Unified dark theme (`GREY_900`), consistent border radius (10px), and "Boxed" inputs.
+- ✅ **Resolution Control**: Added `360p`, `720p`, `1080p` selector.
 
----
+#### **2. Core Engine & AI**
+- ✅ **Sticky Face Tracking**: Smart Cropper now "holds" position on detection failure and prioritizes the active speaker (Sticky Focus).
+- ✅ **Partial Download**: Force external downloader (yt-dlp/ffmpeg) to fetch only the requested segment (0:00-5:00), saving bandwidth.
+- ✅ **Temp Isolation**: Hardcoded temp path to `E:\AI_Video_Engine\temp` to prevent system drive bloat.
+- ✅ **Crash Fixes**: Resolved `KeyError` in crop interpolation and filename sanitization for Windows.
 
-Also need the AI to proceed with the Plan 3 -> the cleanup part, which forgot to do.
+#### **3. Rendering & Styles**
+- ✅ **Professional Captions**: Added "Boxed" style (Black Background) inspired by *Captioneer*.
+- ✅ **Viral Presets**: Includes "Hormozi" (Yellow/Bold), "Minimal" (Clean/White), "Neon" (Cyan/Glow), "Fire" (Red/Yellow).
+- ✅ **NVENC Acceleration**: Enabled NVIDIA GPU encoding for faster export.
 
-also need suggestions from the AI agent for any other Phases after 3, if they are remaining, request the AI Agent to add them to the file -> 
-improve_from_prompts.md
-  for tracking.
-
-### EXE & PORTABLE INSTALLER (Proposed Approach)
-
-To make a professional, portable `.exe` that handles setup automatically:
-
-1. **The Core Packaging**:
-   - Use **Nuitka** or **PyInstaller**. Nuitka is better for "PRO" apps as it compiles Python to C++ (faster and harder to reverse-engineer).
-   - Use the `--onefile` flag for a single EXE, or `--onedir` for faster startup.
-
-2. **The Bootstrapper Logic (First Run)**:
-   - Create a `bootstrap.py` that runs before the `main_ui.py`.
-   - **Check 1 (Environment)**: Does the `.venv` or required libraries exist?
-   - **Check 2 (Models)**: Do the Whisper models and Ollama weights exist on the `E:` drive?
-   - **Action**: If missing, show a "First Time Setup" screen in Flet that downloads them step-by-step.
-
-3. **Inno Setup (The Installer)**:
-   - Use **Inno Setup** (industry standard) to create the `.exe` installer.
-   - It will unpack the core engine into `E:\AI_Video_Engine`.
-   - It can also add a Desktop Shortcut to `launch_hidden.vbs`.
-
-4. **Portability**:
-   - Keep all paths relative to the executable using `os.path.dirname(sys.executable)`.
-   - This ensures if the user moves the folder, it still works.
+#### **4. System & Deployment**
+- ✅ **Portable Build**: Standalone EXE logic documented.
+- ✅ **Stealth Mode**: `launch_hidden.vbs` to run backend processes silently.
+- ✅ **One-Click Installer**: Initial Inno Setup script created.
 
 ---
 
-### 🔮 SUGGESTED FUTURE PHASES (Roadmap)
+### 🚧 ACTIVE TASKS / KNOWN ISSUES
 
-**Phase 4: Distribution & Security**
-- [x] **One-Click Installer**: Implemented `bootstrap.py` and `setup_script.iss` (Inno Setup).
-- [ ] **License Key System**: Add a simple key verification (Gumroad/Stripe API) to `main_ui.py` before the app unlocks.
-- [ ] **Auto-Update**: Check a GitHub repo for new versions on startup.
+- [ ] **Advanced Scene Detection**: Implement `PySceneDetect` *before* Ollama to provide better cut points for the AI.
+- [ ] **Ollama VRAM Optimization**: Ensure large context windows don't crash on 4GB/6GB cards (currently tuned for 8GB).
+- [ ] **MediaPipe Warnings**: Safe to ignore, but "Feedback manager" warnings persist in console.
 
-**Phase 5: Performance & Intelligence**
-- [ ] **Scene Detection**: Use `PySceneDetect` before Ollama to give the AI better cut points.
-- [ ] **GPU Acceleration for Whisper**: Verify if `faster-whisper` is truly using CUDA (add a check in logs).
-- [ ] **Batch Mode**: Allow pasting a playlist URL to process multiple videos overnight.
+---
 
-**Phase 6: Cloud & Social (SaaS features)**
-- [ ] **Direct Upload**: Integrate YouTube/TikTok APIs to upload clips directly from the app.
-- [ ] **Cloud Rendering**: Offload the heavy rendering to a Modal.com / Replicate server if the user has a weak PC.
+Need to improve the video download, it is fast, but can be improved ->
+```
+ Stream #0:1(eng): Audio: aac (LC) (mp4a / 0x6134706D), 44100 Hz, stereo, fltp, 128 kb/s (default)
+    Metadata:
+      creation_time   : 2025-10-08T01:22:09.000000Z
+      handler_name    : ISO Media file produced by Google Inc.
+      vendor_id       : [0][0][0][0]
+Press [q] to stop, [?] for help
+frame= 3720 fps= 52 q=-1.0 size=   33792KiB time=00:02:04.09 bitrate=2230.8kbits/s speed=1.74x elapsed=0:01:11.18
+```
+But the main focus is on the accuracy and quality, no need to compromise it.
 
-ask the AI agent to setup the GitHub repo for the project, so that the user can use push the working changes to the repo.
-By doing this, the user can ensure the working app is always there in working state, while locally the user can continue to improve the app.
+
+The app UI is looking so good. But it has flaws, like when the user makes it small and big by resizing, it has it's CSS issues, the boxes, width does not fix properly. (this can be done after the core functionality works properly, but it's Important for UX perspective)
+
+In the live intelligence & logs, I request you to show all the logs which are seen on the terminal window, which the user opens while double-clicking on launch.bat
+By doing this, it will prevent the user to alt+tab to see the process and logs, and other data.
 
 
+Also, in the terminal -> 
+```
+W0000 00:00:1770571542.259878   21200 inference_feedback_manager.cc:114] Feedback manager requires a model with a single signature inference. Disabling support for feedback tensors.
+W0000 00:00:1770571542.265173   19672 inference_feedback_manager.cc:114] Feedback manager requires a model with a single signature inference. Disabling support for feedback tensors.
+```
+need to manage these logs, either fix them or hide them.
+
+
+Need to make the AI brain more smart, it can find only 1 clip in 3 minutes, which is good, but need to get the maximum out of it.
+
+I made 1 output file and it has better face detection, but it's not able to detect the Speaker.
+Here there are 3 people in the podcast, the speaker is on the left, but it's detecting the right most person.
+It is doing a good job, but need to improve it.
+
+
+
+### 🔮 ROADMAP (Future)
+
+#### **Phase 6: Advanced Intelligence**
+- [ ] **Multi-Speaker Diarization**: improved handling for podcasts with frequent switching.
+- [ ] **Visual Scoring**: Enhance VisionAnalyzer to rate "b-roll" potential.
+
+#### **Phase 7: Monetization & Cloud (SaaS)**
+- [ ] **License Key System**: Add Gumroad/Stripe API check on startup.
+- [ ] **Auto-Update**: Check GitHub releases for new versions.
+- [ ] **Cloud Rendering**: Offload rendering to Modal.com/Replicate for weak PCs.
+
+#### **Phase 8: Social & Viral**
+- [ ] **Auto-Hashtags**: Ask LLM to generate viral hashtags for the clip.
+- [ ] **Subtitle Animation**: Add "Karaoke-style" word highlighting (requires complex FFMpeg/MoviePy filters).
+
+---
+
+### 📚 REFERENCE & INSPIRATION
+
+**Target App Benchmarks**:
+- **Viral Clip AI Studio**: https://viral-clip-ai-studio--npetrijanovic.replit.app/
+- **SMMojo**: https://nenadconnors.gumroad.com/l/smmojo 
+
+**Professional Plugin Inspiration**:
+- **Captioneer**: `E:\YouTube\0.Adobe Plugins & Presets\Aescripts - Captioneer v1.6.4`
+- **SubMachine**: `E:\YouTube\0.Adobe Plugins & Presets\SubMachine_v2.3.1 + Mogrts`
+*Idea: Inspect these for more caption preset styles (e.g. specific fonts, animation curves).*

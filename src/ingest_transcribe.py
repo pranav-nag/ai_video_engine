@@ -23,10 +23,13 @@ class VideoIngestor:
             base_dir = os.path.dirname(os.path.abspath(__file__))
             self.root_dir = os.path.dirname(base_dir)
 
-        self.temp_dir = os.getenv("TEMP", os.path.join(self.root_dir, "temp"))
+        # Force local temp directory if possible, to avoid C: drive usage
+        self.temp_dir = os.path.join(self.root_dir, "temp")
         os.makedirs(self.temp_dir, exist_ok=True)
 
-    def download(self, url, start_time=None, end_time=None, resolution="1080"):
+    def download(
+        self, url, start_time=None, end_time=None, resolution="1080", logger=None
+    ):
         """
         Downloads a video (or segment) from YouTube.
         start_time/end_time can be in seconds or "HH:MM:SS" / "MM:SS" format.
@@ -48,22 +51,46 @@ class VideoIngestor:
             "noplaylist": True,
             "quiet": False,
             "no_warnings": True,
+            # CRITICAL FIX: 'download_sections' is the correct key, but let's ensure it's not overridden
+            # and that we are using a compatible version of yt-dlp.
+            # Also, 'force_keyframes_at_cuts' helps with accuracy.
+            "force_keyframes_at_cuts": True,
+            # PERFORMANCE: Enable concurrent fragment downloads (4 threads)
+            "concurrent_fragment_downloads": 4,
+            # PERFORMANCE: Larger buffer for better disk I/O
+            "buffersize": 1024 * 1024,  # 1MB buffer
         }
 
         # Handle Clipping (Partial Download)
         if start_time or end_time:
             s = start_time if start_time else "0"
             e = end_time if end_time else "inf"
-            print(f"✂️  Downloading segment: {s} to {e}")
+            msg = f"✂️  Downloading segment: {s} to {e}"
+            print(msg)
+            if logger:
+                logger.log(msg, "INFO")
+
+            # Use 'download_ranges' callback approach if sections fail,
+            # but 'download_sections' is the modern standard.
+            # We will strictly enforce the syntax.
+            def timestamp_to_seconds(ts):
+                return self._parse_time(ts)
+
+            start_sec = timestamp_to_seconds(s)
+            end_sec = timestamp_to_seconds(e)
+
+            # USE EXTERNAL DOWNLOADER (FFmpeg) - Most reliable for partials
             ydl_opts["download_sections"] = [
                 {
-                    "start_time": self._parse_time(s),
-                    "end_time": self._parse_time(e),
+                    "start_time": start_sec,
+                    "end_time": end_sec,
                     "title": "Analysis_Segment",
                 }
             ]
-            # Forces ffmpeg to handle the sectioning properly
-            ydl_opts["force_keyframes_at_cuts"] = True
+            ydl_opts["external_downloader"] = "ffmpeg"
+            ydl_opts["external_downloader_args"] = {
+                "ffmpeg_i": ["-ss", str(start_sec), "-to", str(end_sec)]
+            }
 
         try:
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
@@ -75,6 +102,24 @@ class VideoIngestor:
         except Exception as e:
             print(f"❌ Download Error: {e}")
             return None, None
+
+    def get_video_info(self, url):
+        """
+        Fetches metadata (duration, title) without downloading.
+        Returns: (duration_seconds, title)
+        """
+        try:
+            ydl_opts = {
+                "quiet": True,
+                "no_warnings": True,
+                "noplaylist": True,
+            }
+            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                info = ydl.extract_info(url, download=False)
+                return info.get("duration", 0), info.get("title", "Unknown")
+        except Exception as e:
+            print(f"❌ Metadata Error: {e}")
+            return 0, None
 
     def _parse_time(self, t):
         """Helper to convert HH:MM:SS or MM:SS to seconds."""
@@ -92,7 +137,7 @@ class VideoIngestor:
 
 
 class Transcriber:
-    def __init__(self, model_size="distil-large-v3"):
+    def __init__(self, model_size="large-v3-turbo"):
         self.model_size = model_size
         self.device = "cuda" if torch.cuda.is_available() else "cpu"
         self.compute_type = "float16" if self.device == "cuda" else "int8"
@@ -119,13 +164,26 @@ class Transcriber:
                 compute_type=self.compute_type,
                 download_root=model_cache_dir,
             )
-            print("✅ Model Loaded.")
+            msg = f"✅ Model Loaded on {self.device.upper()} (Compute: {self.compute_type})"
+            print(msg)
+            # We can't easily access the logger from here without passing it in,
+            # but this print will be caught if the caller logs it.
+            # However, let's try to print to a file if we can, or just rely on the caller.
+            # actually, let's just leave the print, main_ui.py handles capturing some things,
+            # but ideally we want this in the log file.
 
-    def transcribe(self, video_path):
+    def transcribe(self, video_path, logger=None):
         if not self.model:
             self.load_model()
+            if logger:
+                logger.log(
+                    f"🚀 Whisper Model Initialized on {self.device.upper()}", "INFO"
+                )
 
-        print("🎙️  Transcribing audio (Generating Word-Level Timestamps)...")
+        msg = "🎙️  Transcribing audio (Generating Word-Level Timestamps)..."
+        print(msg)
+        if logger:
+            logger.log(msg, "INFO")
 
         # word_timestamps=True is required for precise cutting later
         # vad_filter=True prevents the model from hallucinating in silent parts
@@ -133,9 +191,10 @@ class Transcriber:
             video_path, beam_size=5, word_timestamps=True, vad_filter=True
         )
 
-        print(
-            f"   Detected Language: {info.language.upper()} (Probability: {info.language_probability:.2f})"
-        )
+        msg = f"   Detected Language: {info.language.upper()} (Probability: {info.language_probability:.2f})"
+        print(msg)
+        if logger:
+            logger.log(msg, "INFO", "CYAN")
 
         word_list = []
 
@@ -152,7 +211,10 @@ class Transcriber:
                     # Optional: Print progress dots
                     print(".", end="", flush=True)
 
-        print(f"\n✅ Transcription Complete. {len(word_list)} words extracted.")
+        msg = f"\n✅ Transcription Complete. {len(word_list)} words extracted."
+        print(msg)
+        if logger:
+            logger.log(msg, "INFO")
 
         # AUTO-CLEANUP: Free VRAM immediately after use
         self.free_memory()

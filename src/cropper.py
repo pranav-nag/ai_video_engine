@@ -2,6 +2,9 @@ import cv2
 import os
 
 # DO NOT CHANGE THIS ORDER
+# Suppress MediaPipe/TensorFlow C++ warnings (0 = all, 1 = info, 2 = warning, 3 = error)
+os.environ["GLOG_minloglevel"] = "2"
+
 import mediapipe as mp
 
 # Access solutions through the main module to avoid direct sub-module import issues
@@ -13,86 +16,124 @@ class SmartCropper:
     def __init__(self):
         # We use the explicitly imported sub-module here
         self.face_detection = mp_face_detection.FaceDetection(
-            model_selection=1, min_detection_confidence=0.5
+            model_selection=1, min_detection_confidence=0.65
         )
 
-    def get_face_center(self, image):
+    def get_face_center(self, image, prior_x=None, focus_region="auto"):
         """
-        Returns the X coordinate (0.0 to 1.0) of the primary face.
+        Returns the X coordinate (0.0 to 1.0) of the best face based on focus_region.
         """
         try:
             image_rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
-            results = self.face_detection.process(image_rgb)
 
-            if results.detections:
-                # Get the first face detected
-                detection = results.detections[0]
-                bbox = detection.location_data.relative_bounding_box
+            with mp_face_detection.FaceDetection(
+                model_selection=1, min_detection_confidence=0.6
+            ) as face_detection:
+                results = face_detection.process(image_rgb)
 
-                # Calculate center X (0.0 to 1.0)
-                center_x = bbox.xmin + (bbox.width / 2)
-                return center_x
-        except Exception as e:
-            print(f"⚠️ Face Detection Error: {e}")
+                if results.detections:
+                    best_face = None
+                    best_score = -1
+
+                    for detection in results.detections:
+                        bbox = detection.location_data.relative_bounding_box
+                        center_x = bbox.xmin + (bbox.width / 2)
+                        box_area = bbox.width * bbox.height
+
+                        # --- SCORING LOGIC ---
+                        score = 0
+
+                        if focus_region == "left":
+                            # Bonus for being on the left (0.0 - 0.45)
+                            # We use 0.45 to be slightly generous
+                            score = box_area * (3.0 if center_x < 0.45 else 0.5)
+                        elif focus_region == "right":
+                            # Bonus for being on the right (0.55 - 1.0)
+                            score = box_area * (3.0 if center_x > 0.55 else 0.5)
+                        elif focus_region == "center":
+                            # Bonus for being in center (0.35 - 0.65)
+                            score = box_area * (3.0 if 0.35 < center_x < 0.65 else 0.5)
+                        else:  # "auto"
+                            # Weighted: Size is King, but Center is Queen.
+                            # Size^1.2 makes large faces significantly better.
+                            # Bias against extreme edges using dist_from_center.
+                            dist_from_center = abs(0.5 - center_x)
+                            center_bias = (1 - dist_from_center) ** 0.8
+                            score = (box_area**1.2) * center_bias
+
+                        # Stickiness Bonus (Process Continuity)
+                        if prior_x is not None:
+                            dist_to_prior = abs(center_x - prior_x)
+                            # If very close to prior, huge bonus (maintain lock)
+                            if dist_to_prior < 0.1:
+                                score *= 2.0
+                            elif dist_to_prior > 0.3:
+                                score *= 0.5
+
+                        if score > best_score:
+                            best_score = score
+                            best_face = detection
+
+                    if best_face:
+                        bbox = best_face.location_data.relative_bounding_box
+                        return bbox.xmin + (bbox.width / 2)
+
+        except Exception:
+            pass
 
         return None
 
-    def analyze_video(self, video_path, progress_callback=None):
+    def analyze_video(
+        self, video_path, progress_callback=None, logger=None, focus_region="auto"
+    ):
         """
-        Analyzes the video to determine the crop coordinates for 9:16 aspect ratio.
-        Uses multi-threading to speed up face detection.
+        Analyzes video for face centering with Sticky Focus and Region Preference.
         """
         import concurrent.futures
 
         if not os.path.exists(video_path):
-            print(f"❌ Error: Video not found at {video_path}")
+            if logger:
+                logger.error(f"Video not found: {video_path}")
             return {}, 1, 1
 
         cap = cv2.VideoCapture(video_path)
         width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
         height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
         total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-        fps = cap.get(cv2.CAP_PROP_FPS)
 
-        print(f"📐 Dimensions: {width}x{height} | Frames: {total_frames} | FPS: {fps}")
-
+        # Calculate target crop width (9:16)
         target_width = int(height * (9 / 16))
         if target_width > width:
             target_width = width
 
-        # Config
-        stride = 2  # Process every 2nd frame
-        # Use more threads for the Ryzen 7 (8 cores / 16 threads)
-        max_workers = 12
+        # Config - Optimized for speed without sacrificing quality
+        stride = 4  # Analyze every 4th frame (~6fps @ 24fps source)
+        batch_size = 32
 
-        frame_mapping = {}
-
-        # We'll batch process frames to utilitze CPU better
-        batch_size = 64
+        cpu_count = os.cpu_count() or 4
+        max_workers = max(1, cpu_count - 2)
+        if max_workers > 16:
+            max_workers = 16
 
         def process_batch(frames_data):
             results = []
             with concurrent.futures.ThreadPoolExecutor(
                 max_workers=max_workers
             ) as executor:
-                # MediaPipe can be picky with many threads sharing one instance
-                # but for simple FaceDetection it usually works if we don't recreate it.
-                # However, for MAX performance, we might need a pool of detectors.
-                # Let's try regular first.
+                # pass None for prior_x in parallel, but pass focus_region!
                 future_to_idx = {
-                    executor.submit(self.get_face_center, f): idx
+                    executor.submit(self.get_face_center, f, None, focus_region): idx
                     for f, idx in frames_data
                 }
                 for future in concurrent.futures.as_completed(future_to_idx):
-                    idx = future_to_idx[future]
                     try:
-                        res = future.result()
-                        results.append((idx, res))
-                    except Exception as e:
-                        print(f"Error processing frame {idx}: {e}")
+                        results.append((future_to_idx[future], future.result()))
+                    except:
+                        pass
             return results
 
-        print(f"🚀 Analyzing with {max_workers} threads...")
+        if logger:
+            logger.log(f"🚀 Analyzing with {max_workers} threads...", "INFO")
 
         frame_idx = 0
         all_results = []
@@ -103,81 +144,65 @@ class SmartCropper:
                 ret, frame = cap.read()
                 if not ret:
                     break
-
-                # Only add if it's a stride frame
                 if frame_idx % stride == 0:
                     batch_frames.append((frame.copy(), frame_idx))
-
                 frame_idx += 1
 
             if not batch_frames:
                 break
 
-            # Process batch
             batch_results = process_batch(batch_frames)
             all_results.extend(batch_results)
 
-            # Progress reporting
             if progress_callback:
-                progress = min(1.0, frame_idx / total_frames)
-                progress_callback(progress)
-            else:
-                print(f"   Progress: {frame_idx}/{total_frames} frames...", end="\r")
+                progress_callback(min(1.0, frame_idx / total_frames))
 
         cap.release()
-
-        # Sort results by index
         all_results.sort(key=lambda x: x[0])
 
-        # State-based smoothing (Hysteresis)
-        alpha = 0.1
-        hysteresis_threshold = 0.10
-        current_x = width / 2
-        smoothed_x = current_x
-        last_stable_x = current_x
+        # --- POST-PROCESSING (The "Stickiness" & "Hold" Logic) ---
+        frame_mapping = {}
 
-        # Map processed results back to coordinates
-        processed_indices = [r[0] for r in all_results]
-        processed_centers = [r[1] for r in all_results]
+        # Initialize state
+        current_rel_x = 0.5
+        last_valid_rel_x = 0.5
 
-        for idx, face_rel_x in zip(processed_indices, processed_centers):
-            if face_rel_x is not None:
-                target_center_x = face_rel_x * width
-            else:
-                target_center_x = width / 2
+        # Smoothing factors (0.2 = faster response, less lag)
+        alpha = 0.2  # Increased from 0.1 for better face movement tracking
 
-            smoothed_x = (alpha * target_center_x) + ((1 - alpha) * smoothed_x)
+        for idx, detected_rel_x in all_results:
+            target_rel_x = last_valid_rel_x  # Default to HOLD
 
-            diff = abs(smoothed_x - last_stable_x)
-            if diff > (width * hysteresis_threshold):
-                last_stable_x = smoothed_x
+            if detected_rel_x is not None:
+                # If we found a face, update our target
+                target_rel_x = detected_rel_x
+                last_valid_rel_x = detected_rel_x
 
-            crop_x = int(last_stable_x - (target_width / 2))
+            # Apply Exponential Smoothing
+            current_rel_x = (alpha * target_rel_x) + ((1 - alpha) * current_rel_x)
+
+            # Convert to absolute pixels
+            center_pix = int(current_rel_x * width)
+
+            # Calculate Crop X (Top-Left corner)
+            crop_x = int(center_pix - (target_width / 2))
+
+            # Boundary Checks
             crop_x = max(0, min(crop_x, width - target_width))
+
             frame_mapping[idx] = crop_x
 
-        # Interpolate missing frames
-        for i in range(total_frames):
-            if i not in frame_mapping:
-                # Find nearest neighbor for simplicity, or interpolate
-                # Let's find neighbors
-                prev_idx = max([idx for idx in frame_mapping.keys() if idx < i] or [0])
-                next_idx = min(
-                    [idx for idx in frame_mapping.keys() if idx > i]
-                    or [total_frames - 1]
-                )
+        if logger:
+            logger.log(
+                f"✅ Crop Analysis Complete. Generated {len(frame_mapping)} coordinates.",
+                "INFO",
+            )
 
-                if prev_idx == next_idx:
-                    frame_mapping[i] = frame_mapping.get(prev_idx, 0)
-                else:
-                    t = (i - prev_idx) / (next_idx - prev_idx)
-                    p_val = frame_mapping[prev_idx]
-                    n_val = frame_mapping[next_idx]
-                    frame_mapping[i] = int(p_val + t * (n_val - p_val))
+        # OPTIMIZATION: Free memory after face detection
+        import gc
 
-        print(
-            f"\n✅ Crop Analysis Complete. Generated {len(frame_mapping)} coordinates."
-        )
+        gc.collect()
+
         return frame_mapping, target_width, height
 
 

@@ -3,7 +3,7 @@ yt-dlp
 moviepy
 opencv-python
 mediapipe==0.10.14
-flet
+flet==0.23.2
 python-dotenv
 colorama
 requests
