@@ -1,0 +1,10 @@
+faster-whisper
+yt-dlp
+moviepy
+opencv-python
+mediapipe==0.10.14
+flet
+python-dotenv
+colorama
+requests
+psutil

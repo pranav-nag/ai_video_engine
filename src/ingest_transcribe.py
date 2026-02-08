@@ -1,0 +1,191 @@
+import os
+import gc
+import torch
+import yt_dlp
+from dotenv import load_dotenv
+from faster_whisper import WhisperModel
+
+# 1. LOAD ENV IMMEDIATELY
+# This ensures HuggingFace/Torch caches point to E:/AI_Video_Engine/cache
+# before any heavy libraries are imported.
+load_dotenv()
+
+
+class VideoIngestor:
+    def __init__(self):
+        # Use a local temp_dir relative to the script execution location
+        base_dir = os.path.dirname(os.path.abspath(__file__))
+        root_dir = os.path.dirname(base_dir)  # Go up one level from src
+        self.temp_dir = os.getenv("TEMP", os.path.join(root_dir, "temp"))
+        os.makedirs(self.temp_dir, exist_ok=True)
+
+    def download(self, url, start_time=None, end_time=None, resolution="1080"):
+        """
+        Downloads a video (or segment) from YouTube.
+        start_time/end_time can be in seconds or "HH:MM:SS" / "MM:SS" format.
+        resolution: "360", "480", "720", "1080"
+        """
+        print(f"⬇️  Starting download for: {url} | Res: {resolution}p")
+
+        # Configure yt-dlp
+        # Format: best video with height <= resolution
+        res_format = f"bestvideo[height<={resolution}][ext=mp4]+bestaudio[ext=m4a]/best[height<={resolution}][ext=mp4]/best"
+
+        ydl_opts = {
+            "format": res_format,
+            "outtmpl": f"{self.temp_dir}/%(id)s.%(ext)s",
+            "paths": {
+                "home": self.temp_dir,
+                "temp": self.temp_dir,
+            },
+            "noplaylist": True,
+            "quiet": False,
+            "no_warnings": True,
+        }
+
+        # Handle Clipping (Partial Download)
+        if start_time or end_time:
+            s = start_time if start_time else "0"
+            e = end_time if end_time else "inf"
+            print(f"✂️  Downloading segment: {s} to {e}")
+            ydl_opts["download_sections"] = [
+                {
+                    "start_time": self._parse_time(s),
+                    "end_time": self._parse_time(e),
+                    "title": "Analysis_Segment",
+                }
+            ]
+            # Forces ffmpeg to handle the sectioning properly
+            ydl_opts["force_keyframes_at_cuts"] = True
+
+        try:
+            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                info = ydl.extract_info(url, download=True)
+                filename = ydl.prepare_filename(info)
+                title = info.get("title", "Unknown_Video")
+                print(f"✅ Download Complete: {filename}")
+                return filename, title
+        except Exception as e:
+            print(f"❌ Download Error: {e}")
+            return None, None
+
+    def _parse_time(self, t):
+        """Helper to convert HH:MM:SS or MM:SS to seconds."""
+        if isinstance(t, (int, float)):
+            return float(t)
+        if t == "inf":
+            return float("inf")
+
+        parts = list(map(int, t.split(":")))
+        if len(parts) == 3:  # HH:MM:SS
+            return parts[0] * 3600 + parts[1] * 60 + parts[2]
+        if len(parts) == 2:  # MM:SS
+            return parts[0] * 60 + parts[1]
+        return float(parts[0])  # Just seconds
+
+
+class Transcriber:
+    def __init__(self, model_size="distil-large-v3"):
+        self.model_size = model_size
+        self.device = "cuda" if torch.cuda.is_available() else "cpu"
+        self.compute_type = "float16" if self.device == "cuda" else "int8"
+        self.model = None
+
+    def load_model(self):
+        if self.model is None:
+            print(
+                f"🧠 Loading Whisper Model ({self.model_size}) to {self.device.upper()}..."
+            )
+            # Define local model path
+            base_dir = os.path.dirname(os.path.abspath(__file__))
+            root_dir = os.path.dirname(base_dir)
+            model_cache_dir = os.path.join(root_dir, "models", "whisper")
+
+            # This downloads (or loads) the model to local models/whisper
+            self.model = WhisperModel(
+                self.model_size,
+                device=self.device,
+                compute_type=self.compute_type,
+                download_root=model_cache_dir,
+            )
+            print("✅ Model Loaded.")
+
+    def transcribe(self, video_path):
+        if not self.model:
+            self.load_model()
+
+        print("🎙️  Transcribing audio (Generating Word-Level Timestamps)...")
+
+        # word_timestamps=True is required for precise cutting later
+        # vad_filter=True prevents the model from hallucinating in silent parts
+        segments, info = self.model.transcribe(
+            video_path, beam_size=5, word_timestamps=True, vad_filter=True
+        )
+
+        print(
+            f"   Detected Language: {info.language.upper()} (Probability: {info.language_probability:.2f})"
+        )
+
+        word_list = []
+
+        # Iterate through segments and flatten into a simple list of words
+        for segment in segments:
+            if segment.words:
+                for word in segment.words:
+                    word_data = {
+                        "start": word.start,
+                        "end": word.end,
+                        "word": word.word.strip(),
+                    }
+                    word_list.append(word_data)
+                    # Optional: Print progress dots
+                    print(".", end="", flush=True)
+
+        print(f"\n✅ Transcription Complete. {len(word_list)} words extracted.")
+
+        # AUTO-CLEANUP: Free VRAM immediately after use
+        self.free_memory()
+
+        return word_list
+
+    def free_memory(self):
+        """
+        CRITICAL for 8GB VRAM:
+        Destroys the Whisper model and forces CUDA to release memory
+        so Ollama (LLM) can run without crashing.
+        """
+        print("🧹 Cleaning up GPU VRAM...")
+        if self.model:
+            del self.model
+            self.model = None
+
+        gc.collect()
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+
+        current_vram = torch.cuda.memory_allocated(0) / 1024**2
+        print(f"✅ VRAM Cleared. Current usage: {current_vram:.2f} MB")
+
+        # Give the GPU driver a moment to stabilize before next AI task (Ollama)
+        import time
+
+        time.sleep(1)
+
+
+# --- Usage Example ---
+if __name__ == "__main__":
+    # 1. Test URL (Short video for quick testing)
+    TEST_URL = "https://youtu.be/9AjDaW3G-fQ?si=pPgyqFXjmuun0OLA"
+
+    # 2. Ingest
+    ingestor = VideoIngestor()
+    video_path = ingestor.download(TEST_URL)
+
+    if video_path:
+        # 3. Transcribe
+        transcriber = Transcriber()
+        words = transcriber.transcribe(video_path)
+
+        # 4. Show sample output
+        print("\n--- First 5 Words ---")
+        print(words[:5])
