@@ -3,8 +3,27 @@ TITLE AI Video Engine - Publish to GitHub
 COLOR 0A
 
 echo ==================================================
-echo    AI VIDEO ENGINE - GITHUB PUBLISHER (FIXED)
+echo    AI VIDEO ENGINE - GITHUB PUBLISHER (RECOVERY MODE)
 echo ==================================================
+echo.
+
+:: Check if git exists
+where git >nul 2>nul
+if %ERRORLEVEL% NEQ 0 (
+    echo ❌ Git is not installed. Please install Git for Windows.
+    pause
+    exit /b
+)
+
+:: Check if repo exists, if not, init
+if not exist ".git" (
+    echo ⚠️  Git repository not found (Did you delete .git?)
+    echo 🔧 Re-initializing repository...
+    git init
+    git add .
+    git commit -m "Recovered project state"
+)
+
 echo.
 echo This script will help you push your code to GitHub.
 echo.
