@@ -13,3 +13,5 @@ https://www.youtube.com/watch?v=vRxyCoquhmI
  Please read 
 memory_prompt.md
  in the root directory and the files in the .gemini brain directory (task.md, walkthrough.md) to understand the current state of the AI Video Engine project and the planned Phase 5 (Distribution).
+
+ readme change
