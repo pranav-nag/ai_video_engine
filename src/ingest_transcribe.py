@@ -1,4 +1,5 @@
 import os
+import sys
 import gc
 import torch
 import yt_dlp
@@ -13,10 +14,16 @@ load_dotenv()
 
 class VideoIngestor:
     def __init__(self):
-        # Use a local temp_dir relative to the script execution location
-        base_dir = os.path.dirname(os.path.abspath(__file__))
-        root_dir = os.path.dirname(base_dir)  # Go up one level from src
-        self.temp_dir = os.getenv("TEMP", os.path.join(root_dir, "temp"))
+        # Determine Root Directory (Compatible with PyInstaller & Dev)
+        if getattr(sys, "frozen", False):
+            # If frozen, we want the folder containing the .exe
+            self.root_dir = os.path.dirname(sys.executable)
+        else:
+            # If dev, go up one level from src/
+            base_dir = os.path.dirname(os.path.abspath(__file__))
+            self.root_dir = os.path.dirname(base_dir)
+
+        self.temp_dir = os.getenv("TEMP", os.path.join(self.root_dir, "temp"))
         os.makedirs(self.temp_dir, exist_ok=True)
 
     def download(self, url, start_time=None, end_time=None, resolution="1080"):
@@ -96,9 +103,13 @@ class Transcriber:
             print(
                 f"🧠 Loading Whisper Model ({self.model_size}) to {self.device.upper()}..."
             )
-            # Define local model path
-            base_dir = os.path.dirname(os.path.abspath(__file__))
-            root_dir = os.path.dirname(base_dir)
+            # Define local model path (Compatible with PyInstaller)
+            if getattr(sys, "frozen", False):
+                root_dir = os.path.dirname(sys.executable)
+            else:
+                base_dir = os.path.dirname(os.path.abspath(__file__))
+                root_dir = os.path.dirname(base_dir)
+
             model_cache_dir = os.path.join(root_dir, "models", "whisper")
 
             # This downloads (or loads) the model to local models/whisper
