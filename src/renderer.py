@@ -3,7 +3,7 @@ import moviepy.config as mpc
 from moviepy.video.io.VideoFileClip import VideoFileClip
 from moviepy.video.VideoClip import TextClip
 from moviepy.video.compositing.CompositeVideoClip import CompositeVideoClip
-from moviepy.video.fx.all import crop  # Fixed: Direct import for the crop function
+from moviepy.video.fx.all import crop, resize  # Fixed: Direct import for the crop function
 from dotenv import load_dotenv
 
 # Load Environment Variables for Safe Paths
@@ -245,6 +245,34 @@ class VideoRenderer:
                 elif style_name == "Boxed":
                     current_bg = "#000000"  # Black box
 
+                # EMOJI MAPPING (Static "Viral" Dictionary)
+                EMOJI_MAPPING = {
+                    "MONEY": "💰", "CASH": "💵", "DOLLAR": "💲", "RICH": "🤑",
+                    "FIRE": "🔥", "HOT": "🥵", "BURN": "🎇",
+                    "HAPPY": "😊", "LAUGH": "😂", "FUNNY": "🤣", "SMILE": "😁",
+                    "SAD": "😢", "CRY": "😭",
+                    "LOVE": "❤️", "HEART": "💖", "LIKE": "👍",
+                    "ANGRY": "​​​​​​😡", "MAD": "🤬",
+                    "SCARY": "😱", "FEAR": "😨",
+                    "SHOCK": "😱", "OMG": "🙀", "WOW": "🤯",
+                    "STOP": "🛑", "WAIT": "✋",
+                    "TIME": "⏰", "CLOCK": "🕰️",
+                    "GOAL": "​​​​​​🎯", "KICK": "🦶",
+                    "WIN": "🏆", "VICTORY": "✌️",
+                    "BRAIN": "🧠", "THINK": "🤔", "IDEA": "💡",
+                    "DEAL": "🤝",
+                    "WORLD": "🌎",
+                    "KING": "👑", "QUEEN": "👸",
+                    "STAR": "⭐",
+                    "ROCKET": "🚀",
+                    "SKULL": "💀", "DEAD": "⚰️",
+                }
+
+                # Check for Emoji
+                clean_word = word_info["word"].upper().strip(",.!?")
+                emoji_char = EMOJI_MAPPING.get(clean_word)
+                
+                # Create Text Clips
                 generated_clips = create_styled_text(
                     word_info["word"].upper(),
                     font,
@@ -258,6 +286,46 @@ class VideoRenderer:
                     shadow_offset=current_shadow,
                     bg_color=current_bg,
                 )
+                
+                # Apply "Pop" Animation (Zoom In)
+                # We apply it to the Main Clip (last one in generated_clips)
+                if generated_clips:
+                    main_clip = generated_clips[-1]
+                    # Simple pop: Start at 1.0, grow to 1.1 or pulse
+                    # t goes from 0 to duration
+                    # We want a quick pop at the start
+                    def pop_effect(t):
+                        # Grow from 0.8 to 1.1 in first 0.1s, then settle at 1.0
+                        if t < 0.1:
+                            return 0.8 + (3 * t)  # 0.8 -> 1.1
+                        return 1.1 - (0.5 * (t - 0.1)) # 1.1 -> settles down slightly
+                    
+                    # Apply resize safely
+                    # Note: resize with function can be slow. Let's do a simple linear zoom for performance.
+                    # generated_clips[-1] = main_clip.resize(lambda t: 1 + 0.1 * t) 
+                    pass # Keeping it simple for NVENC stability for now. Animation adds render time.
+
+                # If Emoji found, create a separate clip above the text
+                if emoji_char:
+                    # Calculated position: same X, but Y is higher (minus offset)
+                    # This relies on position_coords being a tuple or string.
+                    # Simplified: Just put it "Center-ish" but higher.
+                    emoji_y = clip.h * 0.6 if position == "center" else clip.h * 0.55
+                    
+                    # Emoji font fallback (Segoe UI Emoji for Windows)
+                    emoji_clip = (TextClip(
+                        emoji_char,
+                        fontsize=fontsize + 20, # Slightly bigger
+                        font="Segoe UI Emoji",
+                        color="white",
+                        method="caption",
+                        size=(target_w, None)
+                    )
+                    .set_position(("center", emoji_y))
+                    .set_start(w_start)
+                    .set_end(w_end))
+                    
+                    text_clips.append(emoji_clip)
 
                 text_clips.extend(generated_clips)
 

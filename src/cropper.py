@@ -84,10 +84,17 @@ class SmartCropper:
         return None
 
     def analyze_video(
-        self, video_path, progress_callback=None, logger=None, focus_region="auto"
+        self,
+        video_path,
+        progress_callback=None,
+        logger=None,
+        focus_region="auto",
+        scene_boundaries=None,
     ):
         """
         Analyzes video for face centering with Sticky Focus and Region Preference.
+        Args:
+            scene_boundaries: List of timestamps (seconds) where scenes change.
         """
         import concurrent.futures
 
@@ -100,6 +107,7 @@ class SmartCropper:
         width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
         height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
         total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+        fps = cap.get(cv2.CAP_PROP_FPS) or 24.0
 
         # Calculate target crop width (9:16)
         target_width = int(height * (9 / 16))
@@ -167,8 +175,11 @@ class SmartCropper:
         current_rel_x = 0.5
         last_valid_rel_x = 0.5
 
-        # Smoothing factors (0.2 = faster response, less lag)
-        alpha = 0.2  # Increased from 0.1 for better face movement tracking
+        # Pre-calculate scene cut frames
+        scene_cut_frames = set()
+        if scene_boundaries:
+            for t in scene_boundaries:
+                scene_cut_frames.add(int(t * fps))
 
         for idx, detected_rel_x in all_results:
             target_rel_x = last_valid_rel_x  # Default to HOLD
@@ -178,8 +189,21 @@ class SmartCropper:
                 target_rel_x = detected_rel_x
                 last_valid_rel_x = detected_rel_x
 
+            # Determine Smoothing Factor
+            # Normal: 0.2 (smooth)
+            # Scene Cut: 1.0 (instant snap)
+            
+            # Check if this frame (or near it due to stride) is a scene cut
+            is_cut = False
+            for offset in range(stride + 1):
+                if (idx + offset) in scene_cut_frames or (idx - offset) in scene_cut_frames:
+                    is_cut = True
+                    break
+            
+            this_alpha = 1.0 if is_cut else 0.2
+
             # Apply Exponential Smoothing
-            current_rel_x = (alpha * target_rel_x) + ((1 - alpha) * current_rel_x)
+            current_rel_x = (this_alpha * target_rel_x) + ((1 - this_alpha) * current_rel_x)
 
             # Convert to absolute pixels
             center_pix = int(current_rel_x * width)
