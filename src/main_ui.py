@@ -72,7 +72,11 @@ def main(page: ft.Page):
     page.window_width = 1600  # Wider for new layout
     page.window_height = 1000
     page.padding = 0
-    page.bgcolor = ft.colors.BLACK
+    page.bgcolor = "#0a0a0a"  # Deep black/grey
+    page.fonts = {
+        "Inter": "https://fonts.googleapis.com/css2?family=Inter:wght@400;600;900&display=swap"
+    }
+    page.theme = ft.Theme(font_family="Inter")
 
     is_processing = False
     cancel_event = threading.Event()
@@ -498,7 +502,7 @@ def main(page: ft.Page):
                 return
 
             formatted_text = format_transcript_with_time(words)
-            clips = analyze_transcript(
+            clips, scenes = analyze_transcript(
                 formatted_text,
                 min_sec=min_sec,
                 max_sec=max_sec,
@@ -541,6 +545,7 @@ def main(page: ft.Page):
                 progress_callback=crop_progress,
                 logger=video_logger,
                 focus_region=focus_region,
+                scene_boundaries=scenes,
             )
 
             if cancel_event.is_set():
