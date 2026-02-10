@@ -135,19 +135,39 @@ def check_and_download_model():
 def start_app():
     """Import and run the main app."""
     print_status("🚀 Launching AI Video Engine UI...")
+    error_log_path = str(BASE_DIR / "app_error.log")
     try:
         # Important: Import inside function to avoid early init issues
         from src.main_ui import main
 
         ft.app(target=main)
     except ImportError as e:
-        print_status(f"CRITICAL ERROR: Could not import main_ui: {e}")
-        input("Press Enter to exit...")
-    except Exception as e:
-        print_status(f"CRITICAL ERROR running app: {e}")
+        error_msg = f"CRITICAL ERROR: Could not import main_ui: {e}"
+        print_status(error_msg)
         import traceback
 
-        traceback.print_exc()
+        tb = traceback.format_exc()
+        print(tb)
+        # Write to file so it survives even if terminal garbles Unicode
+        with open(error_log_path, "w", encoding="utf-8") as f:
+            f.write(f"{error_msg}\n\n{tb}\n")
+        print_status(f"Error details saved to: {error_log_path}")
+        input("Press Enter to exit...")
+    except Exception as e:
+        error_msg = f"CRITICAL ERROR running app: {e}"
+        print_status(error_msg)
+        import traceback
+
+        tb = traceback.format_exc()
+        print("\n" + "=" * 60)
+        print("FULL ERROR TRACEBACK:")
+        print("=" * 60)
+        print(tb)
+        print("=" * 60 + "\n")
+        # Write to file so it survives even if terminal garbles Unicode
+        with open(error_log_path, "w", encoding="utf-8") as f:
+            f.write(f"{error_msg}\n\n{tb}\n")
+        print_status(f"Error details saved to: {error_log_path}")
         input("Press Enter to exit...")
 
 

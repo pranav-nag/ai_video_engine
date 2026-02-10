@@ -2,6 +2,7 @@ import os
 import json
 import requests
 import cv2
+import time
 from dotenv import load_dotenv
 from src.scene_detect import SceneDetector
 from src.vision_analyzer import VisionAnalyzer
@@ -92,7 +93,12 @@ def snap_to_scenes(clip_start, clip_end, scenes, max_shift=3.0):
 
 
 def analyze_transcript(
-    transcript_text, min_sec=15, max_sec=60, logger=None, video_path=None
+    transcript_text,
+    min_sec=30,  # UPDATED default: 30s
+    max_sec=60,  # UPDATED default: 60s
+    logger=None,
+    video_path=None,
+    progress_callback=None,
 ):
     """
     Sends transcript to Ollama.
@@ -144,7 +150,7 @@ def analyze_transcript(
 
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
-    except:
+    except Exception:
         pass  # Torch may not be imported yet
 
     # --- NEW: Chunking Logic for Long Videos ---
@@ -184,31 +190,27 @@ def analyze_transcript(
                 seen_starts.add(c["start"])
 
         unique_clips.sort(key=lambda x: x["score"], reverse=True)
-        unique_clips.sort(key=lambda x: x["score"], reverse=True)
         return unique_clips[:10], scenes  # Return top 10 and scenes
 
     # --- Existing Single-Chunk Logic ---
 
     system_prompt = (
-        "You are an expert Video Editor for viral TikToks and Shorts. "
-        "Your goal is to find the MOST engaging, standalone segments from the transcript. "
+        "You are an expert Video Editor for viral TikToks and Shorts (Alex Hormozi style). "
+        "Your goal is to find the MOST engaging, standalone segments from the transcript that tell a complete mini-story. "
         "You have access to the transcript and (optionally) visual scene boundaries. "
         "RULES:\n"
-        f"1. EXTREMELY IMPORTANT: Each clip MUST be between {min_sec} and {max_sec} seconds long. "
-        f"2. DO NOT output clips shorter than {min_sec} seconds. "
-        "3. CRITICAL: Clips MUST start and end at Scene Boundaries when provided. "
-        "   Choose the CLOSEST scene boundary to your desired moment. "
-        "   Example: If you want 10s-25s but Scene 2 is 9s-26s, use 9s-26s. "
-        "   This ensures smooth, professional cuts without jarring mid-action transitions. "
-        "4. SCORE CRITERIA (0-100): "
-        "   - 90-100: High Energy, Emotional Peak, Controversial Statement, or 'Wait for it' moment. "
-        "   - 70-89: Solves a problem, tells a complete story, or is funny. "
-        "   - 60-69: Good content, but maybe less 'viral' - STILL INCLUDE if coherent. "
-        "   - < 60: Boring, Ignore. "
-        "5. SMART DURATION: "
-        "   - If the moment is a quick punchline or shock, keep it SHORT (15-30s). "
-        "   - If it's a story or explanation, allow it to be LONGER (45-60s). "
-        "6. Return ONLY valid JSON. "
+        f"1. STRICT DURATION CONSTRAINT: Each clip MUST be between {min_sec} and {max_sec} seconds. "
+        "   Do NOT output clips shorter or longer than this range. Verify duration before outputting. "
+        "2. CONTENT FILTER (CRITICAL): "
+        "   - ✅ KEEP: Emotional realizations, strong opinions, contrarian views, funny moments, or 'wait for it' builds. "
+        "   - ❌ DISCARD: Dry factual descriptions, introductions ('Hello, welcome to...'), or incomplete thoughts. "
+        "3. STRUCTURE: Ensure the clip has a specific HOOK (start) and PAYOFF (end). Do not cut off mid-sentence. "
+        "4. SCENE BOUNDARIES: Prefer cutting at Scene Boundaries if available, BUT prioritization of valid duration is higher. "
+        "5. SCORE CRITERIA (0-100): "
+        "   - 90-100: RAVING FAN potential. High energy, controversial, or deep emotional resonance. "
+        "   - 75-89: Solid content. Good story or clear advice. "
+        "   - < 75: Boring. Ignore. "
+        "6. Output Format: Return ONLY valid JSON."
         'Format: {"clips": [{"start": float, "end": float, "score": int, "hook": "string", "reason": "string", "suggested_emojis": ["😂", "🔥"], "duration_type": "short_burst" | "story_mode"}]}'
     )
 
@@ -222,7 +224,7 @@ def analyze_transcript(
                 "content": f"Analyze this transcript and find 3-5 viral clips ({min_sec}-{max_sec}s).\n{scene_context}\nTRANSCRIPT:\n{transcript_text}",
             },
         ],
-        "stream": False,
+        "stream": True,
         "format": "json",
         "options": {
             "temperature": 0.7,  # Slightly creative but focused
@@ -236,12 +238,73 @@ def analyze_transcript(
         if logger:
             logger.log(msg, "INFO", "PURPLE")
 
-        # Add timeout (300s = 5 mins) to prevent infinite hangs
-        response = requests.post(f"{OLLAMA_URL}/api/chat", json=payload, timeout=300)
-        response.raise_for_status()
+        # Retry logic for connection failures
+        max_retries = 3
+        retry_delay = 2
+        response = None
 
-        result = response.json()
-        response_text = result.get("message", {}).get("content", "")
+        for attempt in range(max_retries):
+            try:
+                # Stream the response for progress feedback
+                response = requests.post(
+                    f"{OLLAMA_URL}/api/chat", json=payload, timeout=600, stream=True
+                )
+                response.raise_for_status()
+                break  # Success, exit retry loop
+            except (
+                requests.exceptions.ConnectionError,
+                requests.exceptions.ChunkedEncodingError,
+            ) as conn_err:
+                if attempt < max_retries - 1:
+                    wait_time = retry_delay * (2**attempt)
+                    msg = f"⚠️ Connection issue (attempt {attempt + 1}/{max_retries}). Retrying in {wait_time}s..."
+                    print(msg)
+                    if logger:
+                        logger.log(msg, "WARNING")
+                    time.sleep(wait_time)
+                else:
+                    raise Exception(
+                        f"Ollama connection failed after {max_retries} attempts: {conn_err}"
+                    )
+
+        # Stream response token by token for progress feedback
+        response_text = ""
+        token_count = 0
+        analysis_start = time.time()
+        last_progress_update = 0
+
+        for line in response.iter_lines():
+            if not line:
+                continue
+            try:
+                chunk = json.loads(line)
+                token = chunk.get("message", {}).get("content", "")
+                response_text += token
+                token_count += 1
+
+                # Update progress every ~20 tokens
+                now = time.time()
+                if now - last_progress_update >= 1.0:
+                    elapsed = now - analysis_start
+                    elapsed_str = f"{int(elapsed // 60)}:{int(elapsed % 60):02d}"
+                    status = f"🧠 AI Analyzing... {token_count} tokens ({elapsed_str} elapsed)"
+                    print(f"\r{status}", end="", flush=True)
+                    if progress_callback:
+                        progress_callback(status)
+                    last_progress_update = now
+
+                # Check if done
+                if chunk.get("done", False):
+                    break
+            except json.JSONDecodeError:
+                continue
+
+        elapsed_total = time.time() - analysis_start
+        elapsed_str = f"{int(elapsed_total // 60)}:{int(elapsed_total % 60):02d}"
+        msg = f"\n✅ AI analysis complete ({token_count} tokens in {elapsed_str})"
+        print(msg)
+        if logger:
+            logger.log(msg, "INFO", "GREEN")
 
         try:
             # 1. First, try simple decode
@@ -340,37 +403,43 @@ def analyze_transcript(
             e_val = safe_float(end)
 
             if s_val is not None and e_val is not None:
-                # [NEW] Duration Validation - Use user's min_sec parameter
+                # [STRICT] Duration Validation - Use user's min_sec AND max_sec parameter
                 duration = e_val - s_val
-                if duration < min_sec:
+                if duration < min_sec or duration > max_sec:
                     print(
-                        f"⚠️ Skipping short clip ({duration:.1f}s < {min_sec}s): {x.get('hook', 'Unknown')}"
+                        f"⚠️ Skipping clip (invalid duration {duration:.1f}s not in {min_sec}-{max_sec}s): {x.get('hook', 'Unknown')}"
                     )
                     continue
 
                 # [SCENE-AWARE] Snap to nearest scene boundaries (if available)
-                # OPTIMIZATION: Reuse cached scenes from earlier detection (line 119)
+                final_s, final_e = s_val, e_val
+
                 if scenes:  # If we have cached scene data
                     try:
-                        s_val, e_val = snap_to_scenes(
+                        snapped_s, snapped_e = snap_to_scenes(
                             s_val, e_val, scenes, max_shift=3.0
                         )
+                        snapped_dur = snapped_e - snapped_s
 
-                        # Re-validate duration after snapping
-                        duration = e_val - s_val
-                        if duration < min_sec or duration > max_sec:
-                            print(
-                                f"⚠️ Skipping clip after scene-snap ({duration:.1f}s out of range): {x.get('hook', 'Unknown')}"
-                            )
-                            continue
-                    except:
+                        # Only accept snap if it respects duration constraints
+                        if min_sec <= snapped_dur <= max_sec:
+                            final_s, final_e = snapped_s, snapped_e
+                        else:
+                            # Snap pushed it out of bounds - keep original (which we know is valid)
+                            pass
+                    except Exception:
                         pass  # Fall back to original timestamps if snapping fails
+
+                # Double check final duration just in case
+                final_dur = final_e - final_s
+                if final_dur < min_sec or final_dur > max_sec:
+                    continue
 
                 # Force to float/int
                 try:
                     cleaned_clip = {
-                        "start": s_val,
-                        "end": e_val,
+                        "start": final_s,
+                        "end": final_e,
                         "score": int(score) if safe_float(score) is not None else 0,
                         "hook": str(x.get("hook", "No Hook")),
                         "reason": str(x.get("reason", "No reason provided")),
@@ -382,73 +451,6 @@ def analyze_transcript(
 
         # Sort by score (Robustly)
         clips.sort(key=lambda x: x["score"], reverse=True)
-
-        # Sort by score (Robustly)
-        clips.sort(key=lambda x: x["score"], reverse=True)
-        top_clips = clips[:5]
-
-        # --- VISION ANALYSIS (Hybrid Scoring) ---
-        if video_path and os.path.exists(video_path):
-            try:
-                msg = f"👁️ Analying Visuals for Top {len(top_clips)} Clips..."
-                print(msg)
-                if logger:
-                    logger.log(msg, "INFO", "PURPLE")
-
-                vision = VisionAnalyzer()
-                # We only analyze the specific time ranges of the top clips to save time/compute
-                for clip in top_clips:
-                    # Extract middle frame of the clip for scoring
-                    mid_point = (clip["start"] + clip["end"]) / 2
-
-                    # Quick frame extraction using CV2 (we could add a method to VisionAnalyzer for this)
-                    cap = cv2.VideoCapture(video_path)
-                    cap.set(cv2.CAP_PROP_POS_MSEC, mid_point * 1000)
-                    ret, frame = cap.read()
-                    cap.release()
-
-                    if ret:
-                        temp_frame = f"temp_frame_{mid_point}.jpg"
-                        cv2.imwrite(temp_frame, frame)
-
-                        prompt = 'Rate this video frame for viral potential (0-100). Is it visually interesting? JSON: {"score": int}'
-                        # Simple synchronous call
-                        response_text = vision.analyze_frame(temp_frame, prompt)
-
-                        if os.path.exists(temp_frame):
-                            os.remove(temp_frame)
-
-                        # Parse visual score
-                        visual_score = 0
-                        try:
-                            # Basic cleanup
-                            clean = (
-                                response_text.replace("```json", "")
-                                .replace("```", "")
-                                .strip()
-                            )
-                            v_data = json.loads(clean)
-                            visual_score = int(v_data.get("score", 0))
-                        except:
-                            pass
-
-                        # Weighted Score: 70% Text, 30% Visual
-                        old_score = clip["score"]
-                        new_score = int((old_score * 0.7) + (visual_score * 0.3))
-                        clip["score"] = new_score
-                        clip["reason"] += f" | Visual: {visual_score}/100"
-
-                        if logger:
-                            logger.log(
-                                f"   Clip '{clip['hook'][:15]}...': Text={old_score}, Vis={visual_score} -> Final={new_score}",
-                                "INFO",
-                            )
-
-            except Exception as e:
-                if logger:
-                    logger.log(f"⚠️ Vision analysis skipped: {e}", "WARNING")
-
-        # Re-sort after visual scoring
         top_clips = clips[:5]
 
         # --- VISION ANALYSIS (Hybrid Scoring) ---
@@ -461,70 +463,72 @@ def analyze_transcript(
 
                 vision = VisionAnalyzer()
                 # We only analyze the specific time ranges of the top clips to save time/compute
-                        # Multi-Frame Analysis (Start, Mid, End)
-                        timestamps = [
-                            clip["start"] + (clip["end"] - clip["start"]) * 0.1,
-                            clip["start"] + (clip["end"] - clip["start"]) * 0.5,
-                            clip["start"] + (clip["end"] - clip["start"]) * 0.9,
-                        ]
-                        
-                        frame_scores = []
-                        
-                        for i, ts in enumerate(timestamps):
-                            # Quick frame extraction
-                            cap = cv2.VideoCapture(video_path)
-                            cap.set(cv2.CAP_PROP_POS_MSEC, ts * 1000)
-                            ret, frame = cap.read()
-                            cap.release()
+                for clip in top_clips:
+                    # Multi-Frame Analysis (Start, Mid, End)
+                    timestamps = [
+                        clip["start"] + (clip["end"] - clip["start"]) * 0.1,
+                        clip["start"] + (clip["end"] - clip["start"]) * 0.5,
+                        clip["start"] + (clip["end"] - clip["start"]) * 0.9,
+                    ]
 
-                            if ret:
-                                temp_frame = f"temp_frame_{i}_{ts}.jpg"
-                                cv2.imwrite(temp_frame, frame)
+                    frame_scores = []
 
-                                prompt = 'Rate this video frame for viral potential (0-100). Is it visually interesting? JSON: {"score": int}'
-                                try:
-                                    response_text = vision.analyze_frame(temp_frame, prompt)
-                                    # Basic cleanup
-                                    clean = (
-                                        response_text.replace("```json", "")
-                                        .replace("```", "")
-                                        .strip()
-                                    )
-                                    if "{" in clean:
-                                        import json as j
-                                        v_data = j.loads(clean)
-                                        frame_scores.append(int(v_data.get("score", 0)))
-                                except Exception:
-                                    pass
-                                finally:
-                                    if os.path.exists(temp_frame):
-                                        os.remove(temp_frame)
+                    for i, ts in enumerate(timestamps):
+                        # Quick frame extraction
+                        cap = cv2.VideoCapture(video_path)
+                        cap.set(cv2.CAP_PROP_POS_MSEC, ts * 1000)
+                        ret, frame = cap.read()
+                        cap.release()
 
-                        # Calculate Weighted Visual Score
-                        # If we have 3 scores: Start(20%), Mid(50%), End(30%)
-                        if frame_scores:
-                            if len(frame_scores) >= 3:
-                                visual_score = int(
-                                    frame_scores[0] * 0.2 + 
-                                    frame_scores[1] * 0.5 + 
-                                    frame_scores[2] * 0.3
+                        if ret:
+                            temp_frame = f"temp_frame_{i}_{ts}.jpg"
+                            cv2.imwrite(temp_frame, frame)
+
+                            prompt = 'Rate this video frame for viral potential (0-100). Is it visually interesting? JSON: {"score": int}'
+                            try:
+                                response_text = vision.analyze_frame(temp_frame, prompt)
+                                # Basic cleanup
+                                clean = (
+                                    response_text.replace("```json", "")
+                                    .replace("```", "")
+                                    .strip()
                                 )
-                            else:
-                                visual_score = int(sum(frame_scores) / len(frame_scores))
-                        else:
-                            visual_score = 0
+                                if "{" in clean:
+                                    import json as j
 
-                        # Weighted Score: 70% Text, 30% Visual
-                        old_score = clip["score"]
-                        new_score = int((old_score * 0.7) + (visual_score * 0.3))
-                        clip["score"] = new_score
-                        clip["reason"] += f" | Visual: {visual_score}/100"
+                                    v_data = j.loads(clean)
+                                    frame_scores.append(int(v_data.get("score", 0)))
+                            except Exception:
+                                pass
+                            finally:
+                                if os.path.exists(temp_frame):
+                                    os.remove(temp_frame)
 
-                        if logger:
-                            logger.log(
-                                f"   Clip '{clip['hook'][:15]}...': Text={old_score}, Vis={visual_score} -> Final={new_score}",
-                                "INFO",
+                    # Calculate Weighted Visual Score
+                    # If we have 3 scores: Start(20%), Mid(50%), End(30%)
+                    if frame_scores:
+                        if len(frame_scores) >= 3:
+                            visual_score = int(
+                                frame_scores[0] * 0.2
+                                + frame_scores[1] * 0.5
+                                + frame_scores[2] * 0.3
                             )
+                        else:
+                            visual_score = int(sum(frame_scores) / len(frame_scores))
+                    else:
+                        visual_score = 0
+
+                    # Weighted Score: 70% Text, 30% Visual
+                    old_score = clip["score"]
+                    new_score = int((old_score * 0.7) + (visual_score * 0.3))
+                    clip["score"] = new_score
+                    clip["reason"] += f" | Visual: {visual_score}/100"
+
+                    if logger:
+                        logger.log(
+                            f"   Clip '{clip['hook'][:15]}...': Text={old_score}, Vis={visual_score} -> Final={new_score}",
+                            "INFO",
+                        )
 
             except Exception as e:
                 # Log but do not fail
@@ -541,13 +545,29 @@ def analyze_transcript(
         return top_clips, scenes
 
     except Exception as e:
+        import traceback
+
+        error_trace = traceback.format_exc()
+
         msg = f"❌ Analysis Error: {e}"
         print(msg)
+        print(f"\n{'=' * 60}\nDETAILED ERROR:\n{'=' * 60}\n{error_trace}\n{'=' * 60}\n")
+
         if logger:
             logger.error(msg)
+            logger.log(f"Error Type: {type(e).__name__}", "ERROR")
+            logger.log(f"Error Details: {str(e)}", "ERROR")
+            # Log the full traceback to file
+            for line in error_trace.split("\n"):
+                if line.strip():
+                    logger.log(line, "ERROR")
+
         # If possible, show what failed
         if "response_text" in locals() and response_text:
             print(f"📄 Raw Output was: {response_text[:200]}...")
+            if logger:
+                logger.log(f"Raw Ollama Output: {response_text[:500]}", "INFO")
+
         return [], []
 
 

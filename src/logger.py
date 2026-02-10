@@ -140,3 +140,61 @@ class VideoLogger:
                 handler.close()
                 self.logger.removeHandler(handler)
             self.logger = None
+
+
+try:
+    import proglog
+
+    class FletProglog(proglog.ProgressBarLogger):
+        def __init__(
+            self,
+            ui_callback,
+            init_state=None,
+            bars=None,
+            ignored_bars=None,
+            logged_bars="all",
+            min_time_interval=0,
+            ignore_bars_under=0,
+        ):
+            super().__init__(
+                init_state,
+                bars,
+                ignored_bars,
+                logged_bars,
+                min_time_interval,
+                ignore_bars_under,
+            )
+            self.ui_callback = ui_callback
+
+        def callback(self, **changes):
+            pass
+
+        def bars_callback(self, bar, attr, value, old_value=None):
+            if attr == "index":
+                total = self.bars[bar].get("total", 0)
+                if total > 0:
+                    percentage = value / total
+
+                    # Calculate ETA
+                    import time
+
+                    start_time = self.bars[bar].get("start_time", time.time())
+                    # If start_time is missing in bars (it should get set on init), fallback
+                    elapsed = time.time() - start_time
+                    eta_str = ""
+                    if value > 0 and elapsed > 0.5:
+                        rate = value / elapsed
+                        if rate > 0:
+                            remaining_seconds = (total - value) / rate
+                            if remaining_seconds >= 3600:
+                                eta_str = f" | ETA: {int(remaining_seconds // 3600)}:{int((remaining_seconds % 3600) // 60):02d}:{int(remaining_seconds % 60):02d}"
+                            else:
+                                eta_str = f" | ETA: {int(remaining_seconds // 60)}:{int(remaining_seconds % 60):02d}"
+
+                    if self.ui_callback:
+                        self.ui_callback(
+                            percentage,
+                            f"Rendering... {int(percentage * 100)}%{eta_str}",
+                        )
+except ImportError:
+    pass

@@ -1,372 +1,157 @@
 # AI Video Engine - Project Memory & Context
 
-> **Purpose**: This document provides complete context for AI agents to understand the project's current state, architecture, optimizations, and future improvement opportunities.
+> **Purpose**: This document is the **Single Source of Truth** for AI Agents working on this project. It defines the architecture, constraints, and operational rules.
 
 ---
 
-## 1. Project Overview
+## 🛑 CRITICAL OPERATIONAL RULES (DO NOT IGNORE)
 
-**Name**: AI Video Engine  
-**Purpose**: Automated viral short-form video generator for TikTok/YouTube Shorts  
-**Location**: `E:\AI_Video_Engine`
+### 1. Environment & Safety
+> [!CRITICAL]
+> **VIRTUAL ENVIRONMENT IS MANDATORY**
+> **Current Path**: `E:\AI_Video_Engine\.venv\Scripts\python.exe`
+>
+> **YOU MUST ALWAYS USE THE VENV FOR ALL COMMANDS.**
+> - ❌ `python script.py` (WRONG)
+> - ❌ `pip install package` (WRONG)
+> - ✅ `./.venv/Scripts/python script.py` (CORRECT)
+> - ✅ `./.venv/Scripts/python -m pip install package` (CORRECT)
+>
+> **FAILURE TO DO THIS WILL BREAK THE SYSTEM.**
+  
+### 2. System Dependencies
+- **Ollama**: This is a **SYSTEM APPLICATION**, not a Python package. 
+  - **DO NOT** attempt to pip install it.
+  - **DO NOT** delete it. 
+  - It must be running in the background for analysis to work.
+- **ImageMagick**: Located at `assets/ImageMagick/convert.exe`.
 
-### Core Workflow
-1. **Download** video segment from YouTube (yt-dlp)
-2. **Transcribe** audio with word-level timestamps (Whisper)
-3. **Analyze** transcript for viral moments (Ollama LLM)
-4. **Detect** face positions for smart cropping (MediaPipe)
-5. **Render** 9:16 clips with animated captions (MoviePy + NVENC)
-
----
-
-## 2. Hardware Configuration
-
-**GPU**: NVIDIA RTX 4060 (8GB VRAM)  
-**CPU**: Ryzen 7 7435HS  
-**RAM**: 24GB DDR4  
-**Storage**: E:\ drive (AI projects)
-
-### VRAM Constraints
-- **Critical**: 8GB VRAM requires careful model selection
-- **Strategy**: Sequential processing (Whisper → free VRAM → Ollama)
-- **Quantization**: Use INT8/FP16 models where possible
-
----
-
-## 3. Current Tech Stack (As of 2026-02-09)
-
-### AI Models
-| Component | Model | VRAM Usage | Notes |
-|-----------|-------|------------|-------|
-| **Transcription** | `faster-whisper large-v3-turbo` | ~5GB | **UPGRADED** from `distil-large-v3` (4x faster) |
-| **LLM Analysis** | `llama3.2:latest` (Ollama) | ~4GB | **CONSIDER**: `qwen2.5:7b` for better vision analysis |
-| **Face Detection** | MediaPipe (BlazeFace) | ~500MB | Optimized settings: confidence=0.6-0.65 |
-| **Vision Analysis** | `llava:7b` (Ollama) | ~4GB | Optional hybrid scoring |
-
-### Key Libraries
-- **yt-dlp**: Video download (concurrent fragments enabled)
-- **faster-whisper**: Transcription (CTranslate2 optimized)
-- **opencv-python**: Video processing
-- **mediapipe**: Face detection
-- **moviepy**: Video rendering
-- **requests**: Ollama API calls
-- **flet**: Desktop UI framework
+### 3. Documentation Protocol
+- **Start of Session**: Read `PROJECT_MEMORY.md` (this file) and `USER_PROMPTS.md`.
+- **Planning**: Update `PLAN.md` before writing code.
+- **Execution**: Log major decisions in `DEV_LOG.md`.
+- **End of Session**: Update this file with new learnings (Section 7).
 
 ---
 
-## 4. Recent Optimizations (Session 2026-02-09)
+## 1. Project Architecture
 
-### Performance Improvements
+**Goal**: automated viral short-form video generator (TikTok/Shorts) based on transcript and visual analysis.
 
-#### A. Scene Detection Speed (5-10x Faster)
-- **File**: `src/scene_detect.py`
-- **Change**: Auto-generate 360p proxy for analysis
-- **Before**: 140fps → 4fps degradation on long videos
-- **After**: Consistent 100+ fps
-- **Method**: `ffmpeg -vf scale=-1:360 -preset ultrafast -crf 28`
+### Core Pipeline (`src/`)
+| Module | Function | Key Models/Tech |
+|:---|:---|:---|
+| **`ingest_transcribe.py`** | Downloads video & Generates timestamps | `yt-dlp` (Multi-thread), `faster-whisper large-v3-turbo` |
+| **`analyzer.py`** | Finds viral hooks & scene scenes | `qwen2.5:7b` (Ollama), `SceneDetector` (PySceneDetect) |
+| **`vision_analyzer.py`** | Hybrid Visual Scoring | `llava:7b` (Ollama) - Start/Mid/End frame analysis |
+| **`cropper.py`** | 9:16 Smart Cropping | `MediaPipe` (Face Mesh), Scene-Aware Smoothing |
+| **`fast_caption.py`** | **[NEW]** Subtitle Generation | Generates `.ass` file with Karaoke & Pop Animations |
+| **`renderer.py`** | Final Video Composition | `FFmpeg` (burning .ass), `NVENC` (Hardware Accel) |
+| **`main_ui.py`** | Desktop GUI | `Flet` (Modern Dark Theme) |
 
-#### B. Download Speed
-- **File**: `src/ingest_transcribe.py`
-- **Change**: Enabled concurrent fragment downloads
-- **Settings**: `concurrent_fragment_downloads: 4`, `buffersize: 1MB`
-
-#### C. Face Detection Accuracy & Speed
-- **File**: `src/cropper.py`
-- **Confidence**: `0.4→0.6`, `0.5→0.65` (more accurate)
-- **Stride**: `2→4` (50% faster processing)
-- **Smoothing**: `alpha=0.1→0.2` (faster response to movement)
-
-#### D. Transcription Speed (4x Faster)
-- **File**: `src/ingest_transcribe.py:136`
-- **Model**: `distil-large-v3` → `large-v3-turbo`
-- **Benefit**: 4x speed, same accuracy (2026 release)
-
-### Bug Fixes
-
-#### E. Clip Length Validation
-- **File**: `src/analyzer.py:292`
-- **Issue**: Hardcoded 10s minimum, ignored user's `min_sec` parameter
-- **Fix**: Now uses `min_sec` (respects 15-60s UI setting)
-- **Impact**: AI-generated 12-15s clips no longer rejected
-
-### UI Enhancements
-
-#### F. Modern Duration Controls
-- **File**: `src/main_ui.py`
-- **Added**: `ft.RangeSlider` + Quick Select Chips (Full/First/Last 60s)
-- **Replaced**: Static text inputs with interactive slider
-
-#### G. Output Quality Controls
-- **Tab**: "AI & Target"
-- **Added**: Bitrate dropdown (Auto/10/20/50 Mbps)
-- **Added**: Resolution dropdown (1080x1920, 720x1280, Source)
-- **Implementation**: `src/renderer.py` - VBR/CQ mode switching
-
-#### H. Cancel Button
-- **File**: `src/main_ui.py`
-- **Feature**: "STOP 🛑" button with pipeline interruption
-- **Logic**: `cancel_event.is_set()` checks at each stage
-
-#### I. UI Polish
-- Sidebar: 650px → 500px (better balance)
-- Color-coded logs (Red=Error, Green=Success, Orange=Warning)
-- Gallery empty state placeholder
-
----
-
-## 5. File Structure & Key Components
-
+### File Structure
 ```
 E:\AI_Video_Engine\
-├── src/
-│   ├── main_ui.py          # Flet desktop app (sidebar + gallery)
-│   ├── ingest_transcribe.py # YouTube download + Whisper transcription
-│   ├── analyzer.py          # Ollama LLM clip analysis + scene detection
-│   ├── cropper.py           # MediaPipe face detection + smart crop
-│   ├── renderer.py          # MoviePy rendering + NVENC acceleration
-│   ├── scene_detect.py      # PySceneDetect wrapper (proxy generation)
-│   ├── vision_analyzer.py   # Ollama vision API (hybrid scoring)
-│   ├── logger.py            # Custom logging to files
-│   ├── cleanup.py           # Temp file management
-│   └── bootstrap.py         # Startup checks
-├── output/                  # Final rendered clips
-├── temp/                    # Downloaded videos (auto-cleanup)
-├── logs/                    # Session logs (named by video title)
-├── models/                  # Whisper model cache
-├── assets/ImageMagick/      # Required for MoviePy text overlays
-├── .venv/                   # Python virtual environment
-└── .env                     # Environment variables (Ollama URL, cache paths)
+├── src/                # Source Code
+├── output/             # Final MP4s
+├── temp/               # Interim files (cleared often)
+├── logs/               # Execution logs
+├── assets/             # Binary dependencies (ImageMagick)
+└── .env                # Config (Ollama URL, Models)
 ```
 
 ---
 
-## 6. Critical Configuration Files
+## 2. Hardware Constraints & Configuration
 
-### `.env` Variables
-```
+**System**: Ryzen 7 7435HS | **RTX 4060 (8GB VRAM)** | 24GB RAM
+
+### Optimization Strategy (8GB VRAM)
+- **Sequential Loading**: We load one model at a time (Whisper -> Release -> Ollama -> Release).
+- **Quantization**: Use INT8/FP16 where possible.
+- **Rendering**: Direct `h264_nvenc` encoding via FFmpeg is prioritized over generic MoviePy write modes.
+
+---
+
+## 3. Configuration & Constants
+
+### `.env`
+```bash
 OLLAMA_BASE_URL=http://localhost:11434
-OLLAMA_CTXLEN=4096
 HF_HOME=E:/AI_Video_Engine/models
 ```
 
-### `analyzer.py` - LLM Settings
-```python
-OLLAMA_MODEL = "llama3.2:latest"  # Consider: qwen2.5:7b
-OLLAMA_CTXLEN = 4096             # Max context window
-CHUNK_SIZE = 4000                # For long videos
-MAX_WORDS_PER_CHUNK = 1500       # Processing chunks
+### Models (Updated 2026-02-09)
+- **LLM**: `qwen2.5:7b` (Best logic/size ratio)
+- **Vision**: `llava:7b` (Hybrid scoring)
+- **Audio**: `faster-whisper large-v3-turbo` (Speed favored)
+
+---
+
+## 4. Current State (Pro Upgrade - v2.5)
+
+### ✅ Working Features
+- **Dynamic Captions**: `.ass` based rendering with "Pop" animations and multi-style support.
+- **Subprocess Transcription**: Whisper is isolated to prevent CUDA cleanup segfaults (safe on 8GB VRAM).
+- **Streaming AI Analysis**: Real-time token progress and timing feedback during Ollama analysis.
+- **Smart Logic**: Tuned "Story Mode" prompt (Hook/Payload/Payoff) + strict 30-60s duration + Scene boundary injection.
+- **Performance**: Subprocess model ensures stability even when CTranslate2 crashes on exit.
+- **Safe Logging**: Harmless shutdown segfaults (Exit 0xC0000005) are automatically suppressed and logged as success.
+- **Professional Output**: 26 Mbps VBR video, 320 kbps AAC, 1080x1920, h264_nvenc acceleration.
+
+- **Human-readable ETA**: All progress displays use `mm:ss` format.
+
+
+### ⚠️ Known Issues / "Gotchas"
+- **Ollama Connection**: If `ollama` command fails, ensure the app is running in system tray.
+- **Unicode Support**: `.ass` files need escaped backslashes (`\\N`) for newlines.
+- **Flet Case Sensitivity**: Use `ft.colors.TRANSPARENT` (Uppercase), not lowercase.
+
+---
+
+## 5. Development Cheat Sheet
+
+### Run the App
+```powershell
+./.venv/Scripts/python src/main_ui.py
 ```
 
-### `renderer.py` - NVENC Parameters
-```python
-codec="h264_nvenc"
-ffmpeg_params=["-preset", "p4", "-cq", "24"]  # Auto quality
-# OR
-ffmpeg_params=["-preset", "p4", "-b:v", "20M"]  # VBR mode
-```
-
-### `cropper.py` - Face Detection
-```python
-min_detection_confidence=0.6     # get_face_center()
-min_detection_confidence=0.65    # __init__()
-stride=4                         # Process every 4th frame
-alpha=0.2                        # Smoothing factor
-```
-
----
-
-## 7. Known Issues & Workarounds
-
-### A. ImageMagick Dependency
-- **Symptom**: "ImageMagick not found" error
-- **Fix**: Rename `assets/ImageMagick/magick.exe` → `convert.exe`
-- **Config**: `renderer.py:14` sets `IMAGEMAGICK_BINARY` path
-
-### B. JSON Parsing Errors (Ollama)
-- **Symptom**: LLM returns invalid JSON
-- **Fix**: Robust multi-stage parser in `analyzer.py:194-263`
-- **Handles**: Code blocks, concatenated objects, malformed responses
-
-### C. Duplicate Vision Analysis
-- **Symptom**: `analyzer.py` lines 319-447 have duplicate vision code
-- **Status**: Functional but redundant (TODO: refactor)
-
-### D. Bare `except` Warnings
-- **Files**: Multiple files using `except:` without exception type
-- **Status**: Non-critical, intentional for stability
-- **IDs**: Linting warnings in IDE (can be suppressed)
-
----
-
-## 8. Performance Benchmarks
-
-### Typical 5-Minute Video (1080p)
-| Stage | Time (Before) | Time (After) | Notes |
-|-------|---------------|--------------|-------|
-| Download | ~45s | ~30s | Concurrent fragments |
-| Transcribe | ~2m | ~30s | large-v3-turbo upgrade |
-| Scene Detect | ~5m | ~45s | 360p proxy |
-| Face Crop | ~3m | ~1.5m | Stride=4 optimization |
-| LLM Analysis | ~1m | ~1m | (No change) |
-| Rendering (3 clips) | ~2m | ~2m | NVENC already fast |
-| **TOTAL** | **~13.5m** | **~6m** | **2.25x speedup** |
-
----
-
-## 9. Future Improvement Opportunities
-
-### High Priority
-1. **Upgrade to Qwen 3 8B**
-   - Better vision/video analysis
-   - Command: `ollama pull qwen2.5:7b`
-   - Update: `analyzer.py:15`
-
-2. **Implement True Scene-Aware Clipping**
-   - Currently passes scene boundaries to LLM as context
-   - Could enforce clips to align with scene changes
-   - Reduces jarring mid-shot cuts
-
-3. **Multi-GPU Support**
-   - Current: Sequential CPU/GPU usage
-   - Future: Parallel Whisper + Ollama on separate GPUs
-
-### Medium Priority
-4. **Batch Processing**
-   - UI: Add playlist/folder input
-   - Process multiple videos sequentially
-   - Generate comparison reports
-
-5. **Custom Caption Styles**
-   - UI: Visual style editor
-   - More fonts, animations, effects
-   - Export style presets
-
-6. **A/B Testing Framework**
-   - Generate variants with different styles/durations
-   - Track which clips perform best
-   - Auto-optimize based on feedback
-
-### Low Priority
-7. **Web UI**
-   - Convert Flet → Next.js or Streamlit
-   - Remote access via browser
-   - Cloud deployment option
-
-8. **Audio Enhancement**
-   - Background music detection
-   - Auto-volume normalization
-   - Noise reduction
-
----
-
-## 10. Debugging Guide
-
-### Check Ollama Status
-```bash
-curl http://localhost:11434/api/tags
+### Debugging Tools
+```powershell
+# Check Models
 ollama list
+
+# Test Subtitles
+./.venv/Scripts/python test_fast_caption.py
 ```
 
-### View Recent Logs
-```bash
-ls -lt E:/AI_Video_Engine/logs/
-tail -f E:/AI_Video_Engine/logs/Session_[VideoTitle]_[timestamp].txt
-```
-
-### Test Components Individually
-```bash
-# Test Whisper
-python -c "from src.ingest_transcribe import Transcriber; t = Transcriber(); print(t.model_size)"
-
-# Test Ollama
-python -c "from src.analyzer import ensure_ollama_running; print(ensure_ollama_running())"
-
-# Test Face Detection
-python src/cropper.py
-```
-
-### VRAM Monitoring
-```python
-import torch
-print(f"VRAM: {torch.cuda.memory_allocated(0) / 1024**2:.2f} MB")
-torch.cuda.empty_cache()
+### Adding Requirements
+**ALWAYS** add to requirements.txt if installing new packages.
+```powershell
+./.venv/Scripts/pip freeze > requirements.txt
 ```
 
 ---
 
-## 11. Development Workflow
+## 6. Hall of Shame (Lessons Learned)
 
-### Making Changes
-1. **Kill running app**: `taskkill /F /IM python.exe`
-2. **Edit source files**
-3. **Test**: `.venv/Scripts/python -m src.main_ui`
-4. **Check logs**: `logs/` folder
-
-### Adding New Features
-1. Update `task.md` with checklist
-2. Create `implementation_plan.md` for complex changes
-3. Implement and test
-4. Update `walkthrough.md` with results
-5. Update this `PROJECT_MEMORY.md`
-
+1. **System vs Venv**: Deleted Ollama from C: thinking it was a local package. **Never delete system apps.**
+2. **Infinite Loops**: Legacy `TextClip` loop in MoviePy caused memory leaks. Switched to `ffmpeg` filters.
+3. **Ghost Cropping**: Smoothing must reset (`alpha=1.0`) at scene boundaries to prevent face tracking from "sliding" across the screen.
+4. **Flet Thread-Safety Crash (2026-02-10)**: Calling `page.update()` from background threads during CUDA/torch operations crashes Flet. **FIX**: The `StreamToLogger` class in `main_ui.py` must NEVER call `page.update()` from threads. Use `sys.__stdout__` for terminal output and rely on ListView's `auto_scroll=True`.
+5. **VRAM Cleanup Crash (2026-02-10)**: Explicitly deleting the model (`del self.model`) or calling `torch.cuda.synchronize()` during cleanup caused crashes. **FIX**: Just set `self.model = None`, call `gc.collect()`, and skip synchronization. UPDATE (2026-02-10 23:00): Wrapping entire cleanup in try/except prevents silent crashes. UPDATE (2026-02-10 23:30): `del self.model` triggers CTranslate2's C++ destructor which performs a raw CUDA free that can segfault — **NEVER use `del`** on GPU model objects.
+6. **Cropper Type Error**: Scene detection returns dicts (`{'start': ...}`), not floats. **FIX**: Updated `cropper.py` to extract `start` key.
+7. **MoviePy 2.x Silent Failure (2026-02-10)**: `clip.resize()` was renamed to `resized()` in MoviePy 2.0. A bare `except: pass` hid the error, causing output at 607×1080 instead of 1080×1920 with 820kbps bitrate. **FIX**: Use `resized()`, never use bare `except: pass`. Always log errors.
+8. **Static Crop Averaging (2026-02-10)**: Averaging all face positions into one crop offset meant the speaker got cut in half when they moved. **FIX**: Per-frame dynamic crop with interpolation from `crop_map`.
+9. **FPS Force (2026-02-10)**: Forcing 30fps on 23.976fps source caused audio/video/subtitle desync. **FIX**: Removed `fps=30` parameter, now using `clip.fps` from source.
+10. **AI Duration Violation (2026-02-10)**: LLM would output clips < min_sec or > max_sec, and scene snapping could push valid clips out of range. **FIX**: Added pre-validation (discard invalid before snap), post-snap validation (reject if snap breaks duration), and hardened prompt.
+11. **Flet Layout Expand Bug (2026-02-10 23:15)**: Setting `expand=True` on settings_tabs container caused it to consume ALL vertical space, hiding buttons and controls. **FIX**: Use fixed `height=520` instead of `expand=True` for nested containers in a Column.
+12. **Stdout Redirect During CUDA Cleanup (2026-02-10 23:30)**: When `sys.stdout` is redirected to `StreamToLogger`, the Whisper model's C++ destructor writes to stdout/stderr during garbage collection. If `StreamToLogger` tries to call Flet controls from a background thread at that moment, the app crashes silently (exit code != 0). **FIX**: Restore `sys.__stdout__` before transcription, initialize `words = None` before try block, and add explicit error handling that restores streams before re-raising. Also add a 2-second GPU stabilization delay before starting Ollama analysis.
+13. **CTranslate2 Segfault is Uncatchable (2026-02-10 23:45)**: The CTranslate2 C++ destructor segfaults during CUDA cleanup regardless of whether you use `del`, `None`, or any Python-level workaround. This is a C-level access violation that `try/except` **cannot catch**. **FIX**: Run Whisper transcription in a **subprocess** (`transcribe_worker.py`). When the subprocess exits, the OS reclaims all GPU memory. Even if the destructor segfaults, only the subprocess dies. The JSON result file is written *before* the crash, so data is preserved.
+14. **Missing `time_to_ass` Method (2026-02-11 00:00)**: `SubtitleGenerator` in `fast_caption.py` called `self.time_to_ass()` but the method was never defined — instant crash at rendering. **FIX**: Added the method that converts float seconds to ASS timecode `H:MM:SS.CC`. Also switched Ollama analysis from blocking `stream: False` to `stream: True` with live token progress feedback.
+15. **Suppressing 'Safe' Segfaults (2026-02-11 00:15)**: The CTranslate2 library has a known bug where its C++ destructor segfaults (Exit Code 0xC0000005) when freeing CUDA memory at process exit. This is **unfixable** from Python as it happens after the global interpreter shuts down. **STRATEGY**: Since the transcription data is already saved to disk, we treat this specific exit code as "Success" and suppress the warning log. This is a permanent limitation of the current `faster-whisper` backend version.
+ - ~~**MoviePy 2.0 Compatibility**: `subclip` removed in v2.0~~ — Already using `subclipped`. Resolved.
+ 
 ---
 
-## 12. Production Deployment Notes
-
-### PyInstaller Build
-- **Spec file**: Create custom spec to include `models/`, `assets/`
-- **Hidden imports**: Add MediaPipe, MoviePy, Ollama dependencies
-- **Data files**: Bundle ImageMagick binaries
-
-### Ollama Setup
-- User must install Ollama separately
-- Auto-detect Ollama at startup (`bootstrap.py`)
-- Prompt user to install if missing
-
----
-
-## 13. Research & External Resources
-
-### Model Sources
-- **Whisper**: [Hugging Face - large-v3-turbo](https://huggingface.co/openai/whisper-large-v3-turbo)
-- **Qwen**: [Ollama - qwen2.5](https://ollama.com/library/qwen2.5)
-- **MediaPipe**: [Google MediaPipe Face Detection](https://google.github.io/mediapipe/solutions/face_detection)
-
-### Performance Research (2026-02-09)
-- Whisper large-v3-turbo: 4x faster than large-v3, minimal accuracy loss
-- Qwen 2.5/3 8B: Best LLM for 8GB VRAM video analysis
-- MediaPipe: Still competitive vs YOLO for single-face tracking on CPU
-
----
-
-## 14. Quick Start for New AI Agent
-
-**Essential Questions to Ask User:**
-1. What feature/issue are you working on?
-2. Have there been changes since last session?
-3. What's the priority: speed, quality, or new features?
-
-**First Actions:**
-1. Read `task.md` for current work status
-2. Check `implementation_plan.md` for pending changes
-3. Review `walkthrough.md` for recent updates
-4. Scan this `PROJECT_MEMORY.md` for context
-
-**Key Files to Understand:**
-- `src/main_ui.py` - UI and pipeline orchestration
-- `src/analyzer.py` - AI analysis logic
-- `src/renderer.py` - Video output
-- `src/cropper.py` - Face tracking
-
----
-
-## 15. Contact & Version Info
-
-**Last Updated**: 2026-02-09 00:17:07 IST  
-**Project Version**: v2.5 (Post-Optimization)  
-**Python**: 3.11+  
-**OS**: Windows 11
-
----
-
-> **Note to AI Agent**: This document should be updated after each major session. Append new findings, remove outdated info, and keep benchmarks current.
+> **Agent Note**: If you fix a new bug, add it to Section 6. If you change architecture, update Section 1.

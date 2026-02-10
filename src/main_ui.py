@@ -11,22 +11,52 @@ from src.ingest_transcribe import VideoIngestor, Transcriber
 from src.analyzer import analyze_transcript, format_transcript_with_time
 from src.cropper import SmartCropper
 from src.renderer import VideoRenderer
-from src.logger import VideoLogger
+from src.logger import VideoLogger, FletProglog
 
 # Load Environment Variables
 load_dotenv()
 
 
-# Redirect terminal output to UI
+# Redirect terminal output to UI (Safe Version - No page.update() from threads)
 class StreamToLogger:
-    def __init__(self, log_list_control):
+    """
+    Stream redirector that captures print statements and adds them to a Flet ListView.
+    IMPORTANT: Does NOT call page.update() from background threads as this crashes
+    Flet during CUDA operations. The ListView uses auto_scroll=True instead.
+
+    FIXED: 2026-02-10 - Removed page.update() calls that were crashing during torch operations.
+    """
+
+    def __init__(self, log_list_control, page=None):
         self.log_list = log_list_control
-        self.terminal = sys.stdout
+        self.terminal = (
+            sys.__stdout__
+        )  # Use original stdout, not potentially redirected one
+        self.page = page
+        self._enabled = True  # Can be disabled during heavy operations
+
+    def disable(self):
+        """Disable UI updates (useful during heavy CUDA operations)."""
+        self._enabled = False
+
+    def enable(self):
+        """Re-enable UI updates."""
+        self._enabled = True
 
     def write(self, message):
-        self.terminal.write(message)
+        # Always write to terminal first (this is always safe)
+        try:
+            if self.terminal:
+                self.terminal.write(message)
+                self.terminal.flush()
+        except Exception:
+            pass
 
-        # Add to UI (Clean up newlines)
+        # Skip UI updates if disabled
+        if not self._enabled:
+            return
+
+        # Add to UI (NO page.update() call - this was causing crashes)
         clean_msg = message.strip()
         if clean_msg:
             try:
@@ -47,6 +77,8 @@ class StreamToLogger:
                 elif "🧠" in clean_msg:
                     color = ft.colors.PURPLE_300
 
+                # Just append to controls - DO NOT call update()
+                # The ListView auto_scroll=True handles scrolling
                 self.log_list.controls.append(
                     ft.Text(
                         clean_msg,
@@ -56,22 +88,26 @@ class StreamToLogger:
                         selectable=True,
                     )
                 )
-                self.log_list.update()
-                self.log_list.scroll_to(offset=-1, duration=50)
-            except:
-                pass
+                # NO page.update() here - this causes crash during CUDA ops!
+            except Exception:
+                pass  # Silently ignore to prevent crash
 
     def flush(self):
-        self.terminal.flush()
+        try:
+            if self.terminal:
+                self.terminal.flush()
+        except Exception:
+            pass
 
 
 def main(page: ft.Page):
     # --- 1. App Configuration ---
     page.title = "AI Video Engine PRO - Co-Pilot Edition"
     page.theme_mode = ft.ThemeMode.DARK
-    page.window_width = 1600  # Wider for new layout
+    page.padding = 0  # Remove default padding to fix "weird black borders"
+    page.spacing = 0  # Remove default spacing
+    page.window_width = 1600
     page.window_height = 1000
-    page.padding = 0
     page.bgcolor = "#0a0a0a"  # Deep black/grey
     page.fonts = {
         "Inter": "https://fonts.googleapis.com/css2?family=Inter:wght@400;600;900&display=swap"
@@ -90,9 +126,11 @@ def main(page: ft.Page):
     # Logs (Defined early for redirection)
     log_list = ft.ListView(expand=True, spacing=2, auto_scroll=True)
 
-    # Redirect Streams
-    sys.stdout = StreamToLogger(log_list)
-    sys.stderr = StreamToLogger(log_list)
+    # Redirect Streams (Thread-Safe with page reference)
+    stdout_logger = StreamToLogger(log_list, page)
+    stderr_logger = StreamToLogger(log_list, page)
+    sys.stdout = stdout_logger
+    sys.stderr = stderr_logger
 
     # 2.1 Left Panel Controls (The "Cockpit")
 
@@ -235,19 +273,26 @@ def main(page: ft.Page):
         border_color=ft.colors.GREY_700,
     )
 
+    caption_size_label = ft.Text("Caption Size: 60px")
+
+    def on_caption_size_change(e):
+        caption_size_label.value = f"Caption Size: {int(e.control.value)}px"
+        page.update()
+
     caption_size_slider = ft.Slider(
         min=20,
         max=100,
         value=60,
-        label="Font Size: {value}px",
+        label="{value}px",
         active_color=ft.colors.PURPLE_400,
+        on_change=on_caption_size_change,
     )
 
     # Tab 3: AI & Output
     duration_slider = ft.RangeSlider(
         min=5,
         max=90,
-        start_value=15,
+        start_value=30,  # UPDATED: Enforce 30s minimum by default
         end_value=60,
         divisions=17,
         label="{value}s",
@@ -384,12 +429,44 @@ def main(page: ft.Page):
         analysis_end.value = format_seconds(source_range_slider.end_value)
         page.update()
 
+    def parse_time_string(time_str):
+        """Parses MM:SS, HH:MM:SS, or SS string to seconds (float)."""
+        try:
+            parts = list(map(int, time_str.split(":")))
+            if len(parts) == 1:
+                return float(parts[0])
+            elif len(parts) == 2:
+                return parts[0] * 60 + parts[1]
+            elif len(parts) == 3:
+                return parts[0] * 3600 + parts[1] * 60 + parts[2]
+            return 0.0
+        except Exception:
+            return 0.0
+
     def on_source_slider_change(e):
         analysis_start.value = format_seconds(e.control.start_value)
         analysis_end.value = format_seconds(e.control.end_value)
         page.update()
 
+    def on_start_blur(e):
+        sec = parse_time_string(analysis_start.value)
+        # Clamp to valid range
+        sec = max(0, min(sec, source_range_slider.end_value))
+        source_range_slider.start_value = sec
+        analysis_start.value = format_seconds(sec)  # Reformats nicely
+        page.update()
+
+    def on_end_blur(e):
+        sec = parse_time_string(analysis_end.value)
+        # Clamp to valid range
+        sec = max(source_range_slider.start_value, min(sec, source_range_slider.max))
+        source_range_slider.end_value = sec
+        analysis_end.value = format_seconds(sec)
+        page.update()
+
     source_range_slider.on_change = on_source_slider_change
+    analysis_start.on_blur = on_start_blur
+    analysis_end.on_blur = on_end_blur
 
     def fetch_video_metadata(e):
         url = url_input.value
@@ -423,7 +500,7 @@ def main(page: ft.Page):
                 else:
                     video_info_text.value = "Could not fetch duration (Live stream?)"
 
-            except Exception as e:
+            except Exception:
                 video_info_text.value = "Error fetching metadata"
 
             url_input.read_only = False
@@ -457,6 +534,7 @@ def main(page: ft.Page):
         output_resolution,
     ):
         nonlocal is_processing
+        video_path = None  # Initialize early so `finally` block can reference it safely
 
         try:
             video_logger.setup("Session_Start", ui_callback=log_to_ui)
@@ -488,33 +566,94 @@ def main(page: ft.Page):
             if video_title:
                 video_logger.rename_log_file(video_title)
 
-            # 2. TRANSCRIPTION
+            # 2. TRANSCRIPTION (runs in subprocess for CUDA safety)
             update_progress(0.3, "Transcribing Audio (Whisper)...")
             if cancel_event.is_set():
                 return
 
-            transcriber = Transcriber()
-            words = transcriber.transcribe(video_path, logger=video_logger)
+            # Subprocess isolation: Whisper runs in a separate process,
+            # so CTranslate2's CUDA destructor crash can't kill the main app.
+            # No need to redirect stdout/stderr or disable StreamToLogger.
+            try:
+                transcriber = Transcriber()
+                words = transcriber.transcribe(video_path, logger=video_logger)
+                print(
+                    f"[PIPELINE] Transcription complete. Words: {len(words)}",
+                    flush=True,
+                )
+            except Exception as transcribe_err:
+                video_logger.log(
+                    f"❌ Transcription failed: {transcribe_err}", ft.colors.RED
+                )
+                import traceback
+
+                traceback.print_exc()
+                raise
+
+            # Post-cleanup stabilization: Give GPU time to fully release VRAM
+            # before Ollama tries to load its own model
+            print(
+                "[PIPELINE] Waiting for GPU to stabilize before AI analysis...",
+                flush=True,
+            )
+            time.sleep(2)
 
             # 3. AI ANALYSIS
+            print("[PIPELINE DEBUG] Starting AI Analysis phase...", flush=True)
+            sys.stdout.flush()
             update_progress(0.5, "AI Analyzing for Viral Moments...")
             if cancel_event.is_set():
                 return
 
+            print("[PIPELINE DEBUG] Formatting transcript...", flush=True)
+            sys.stdout.flush()
             formatted_text = format_transcript_with_time(words)
-            clips, scenes = analyze_transcript(
-                formatted_text,
-                min_sec=min_sec,
-                max_sec=max_sec,
-                logger=video_logger,
-                video_path=video_path,
+            print(
+                f"[PIPELINE DEBUG] Formatted text length: {len(formatted_text)}",
+                flush=True,
             )
+            # 3. Analyze Transcript
+            video_logger.log(
+                "🧠 Analyzing Transcript for Viral Moments...", ft.colors.PURPLE_200
+            )
+
+            try:
+                # AI analysis progress callback for streaming feedback
+                def ai_progress(status_msg):
+                    update_progress(0.55, status_msg)
+
+                clips, scenes = analyze_transcript(
+                    formatted_text,
+                    min_sec=min_sec,
+                    max_sec=max_sec,
+                    logger=video_logger,
+                    video_path=video_path,
+                    progress_callback=ai_progress,
+                )
+            except Exception as e:
+                import traceback
+
+                error_msg = f"❌ Analysis Crash: {str(e)}\n{traceback.format_exc()}"
+                print(error_msg)
+                video_logger.log(error_msg, ft.colors.RED)
+                raise e  # Re-raise to stop pipeline
+
+            if not clips:
+                video_logger.log(
+                    "⚠️ No viral clips found in this segment.", ft.colors.ORANGE
+                )
+                update_progress(1.0, "Done (No Clips Found)")
+                page.update()
+                return
+
+            print(
+                f"[PIPELINE DEBUG] Analysis complete. Clips: {len(clips)}, Scenes: {len(scenes)}",
+                flush=True,
+            )
+            sys.stdout.flush()
             video_logger.capture_ollama_logs()
 
             if cancel_event.is_set():
-                return
-            if not clips:
-                video_logger.log("⚠️ No clips found.", ft.colors.ORANGE)
                 return
 
             # 4. SMART CROP (Optimized)
@@ -526,16 +665,16 @@ def main(page: ft.Page):
             crop_start_time = time.time()
 
             def crop_progress(p):
-                # Check cancel inside callback if possible?
-                # Hard to return from callback to stop parent.
-                # Just rely on outer checks.
                 elapsed = time.time() - crop_start_time
                 val = 0.7 + (p * 0.15)
-                # Simple ETA
+                # Format ETA as mm:ss or h:mm:ss
                 if p > 0.1:
                     total = elapsed / p
                     rem = total - elapsed
-                    eta = f"{int(rem)}s"
+                    if rem >= 3600:
+                        eta = f"{int(rem // 3600)}:{int((rem % 3600) // 60):02d}:{int(rem % 60):02d}"
+                    else:
+                        eta = f"{int(rem // 60)}:{int(rem % 60):02d}"
                 else:
                     eta = "..."
                 update_progress(val, f"Smart Cropping: {int(p * 100)}% (ETA: {eta})")
@@ -562,13 +701,21 @@ def main(page: ft.Page):
             def sanitize_filename(name):
                 return re.sub(r'[<>:"/\\|?*]', "_", name)
 
+            # Generate timestamp for this batch
+            from datetime import datetime
+
+            batch_timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+
             for i, clip in enumerate(clips):
                 if cancel_event.is_set():
                     break
 
-                safe_title = sanitize_filename(video_title[:30])
+                safe_title = sanitize_filename(video_title[:40])
+                # Format: VideoTitle_20260210_221820_Clip1_15s_Hormozi.mp4
+                clip_start_sec = int(clip["start"])
                 clip_filename = (
-                    f"{safe_title.replace(' ', '_')}_Clip_{i + 1}_{style}.mp4"
+                    f"{safe_title.replace(' ', '_')}_{batch_timestamp}_"
+                    f"Clip{i + 1}_{clip_start_sec}s_{style}.mp4"
                 )
                 output_path = os.path.join(output_folder, clip_filename)
 
@@ -590,6 +737,12 @@ def main(page: ft.Page):
                     output_bitrate=output_bitrate,
                     output_resolution=output_resolution,
                     logger=video_logger,
+                    proglog_logger=FletProglog(
+                        ui_callback=lambda p, m: update_progress(
+                            0.5 + (p * 0.5),
+                            f"Rendering Clip {i + 1}... {int(p * 100)}%",
+                        )
+                    ),
                 )
 
                 # GALLERY UPDATE
@@ -639,14 +792,20 @@ def main(page: ft.Page):
                 video_logger.log("🛑 Process Cancelled.", ft.colors.RED)
 
         except Exception as e:
+            import traceback
+
+            error_details = traceback.format_exc()
             video_logger.error(str(e))
             video_logger.log(f"❌ Error: {str(e)}", ft.colors.RED)
+            print(
+                f"\n{'=' * 60}\nFULL ERROR TRACEBACK:\n{'=' * 60}\n{error_details}\n{'=' * 60}\n"
+            )
 
         finally:
             if video_path and os.path.exists(video_path):
                 try:
                     os.remove(video_path)
-                except:
+                except Exception:
                     pass
 
             # Cleanup
@@ -654,7 +813,7 @@ def main(page: ft.Page):
                 from src.cleanup import cleanup_temp_files
 
                 cleanup_temp_files()
-            except:
+            except Exception:
                 pass
 
             video_logger.close()
@@ -745,10 +904,11 @@ def main(page: ft.Page):
                             style_dropdown,
                             focus_dropdown,
                             caption_pos_dropdown,
-                            ft.Text("Caption Size"),
+                            caption_size_label,
                             caption_size_slider,
                         ],
                         spacing=15,
+                        scroll=ft.ScrollMode.AUTO,
                     ),
                     padding=20,
                 ),
@@ -787,48 +947,62 @@ def main(page: ft.Page):
         content=ft.Column(
             [
                 # Header
-                ft.Row(
-                    [
-                        ft.Icon(
-                            ft.icons.AUTO_AWESOME, color=ft.colors.BLUE_400, size=32
-                        ),
-                        ft.Text("AI ENGINE PRO", size=26, weight=ft.FontWeight.W_900),
-                    ]
+                ft.Container(
+                    content=ft.Row(
+                        [
+                            ft.Icon(
+                                ft.icons.AUTO_AWESOME, color=ft.colors.BLUE_400, size=32
+                            ),
+                            ft.Text(
+                                "AI ENGINE PRO", size=26, weight=ft.FontWeight.W_900
+                            ),
+                        ]
+                    ),
+                    padding=ft.padding.only(left=20, right=20, top=15, bottom=10),
                 ),
-                ft.Divider(height=20, color=ft.colors.TRANSPARENT),
                 # URL & Fetch
-                ft.Row(
-                    [url_input, fetch_info_btn],
-                    alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
-                    vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                ft.Container(
+                    content=ft.Row(
+                        [url_input, fetch_info_btn],
+                        alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
+                        vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                    ),
+                    padding=ft.padding.symmetric(horizontal=20),
                 ),
                 # Settings Tabs
                 ft.Container(
                     content=settings_tabs,
-                    height=450,  # Slightly taller
+                    height=520,  # Fixed height to leave room for buttons
                     bgcolor=ft.colors.GREY_900,
                     border_radius=12,
                     padding=10,
+                    margin=ft.margin.only(left=20, right=20, top=10, bottom=10),
                 ),
-                ft.Divider(height=20, color=ft.colors.TRANSPARENT),
                 # Actions
-                ft.Row(
-                    [
-                        ft.Container(process_btn, expand=True),
-                        cancel_btn,
-                    ],
-                    spacing=10,
+                ft.Container(
+                    content=ft.Row(
+                        [
+                            ft.Container(process_btn, expand=True),
+                            cancel_btn,
+                        ],
+                        spacing=10,
+                    ),
+                    padding=ft.padding.symmetric(horizontal=20),
                 ),
-                ft.Column([progress_bar, progress_text], spacing=5),
+                ft.Container(
+                    content=ft.Column([progress_bar, progress_text], spacing=5),
+                    padding=ft.padding.only(left=20, right=20, bottom=15, top=5),
+                ),
             ],
-            spacing=20,
+            spacing=0,  # Remove spacing to eliminate gaps
             expand=True,
             scroll=ft.ScrollMode.AUTO,  # Allow scrolling if height small
         ),
         width=500,  # Narrower for better balance
-        padding=30,
+        padding=0,
         bgcolor=ft.colors.GREY_900,
         border=ft.border.only(right=ft.border.BorderSide(1, ft.colors.BLACK12)),
+        expand=True,  # Make sidebar fill height
     )
 
     # 5.2 Right Panel (Logs + Gallery)

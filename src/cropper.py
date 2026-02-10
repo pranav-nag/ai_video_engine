@@ -178,7 +178,9 @@ class SmartCropper:
         # Pre-calculate scene cut frames
         scene_cut_frames = set()
         if scene_boundaries:
-            for t in scene_boundaries:
+            for scene in scene_boundaries:
+                # scene_boundaries contains dicts with 'start', 'end', 'duration'
+                t = scene.get("start", scene) if isinstance(scene, dict) else scene
                 scene_cut_frames.add(int(t * fps))
 
         for idx, detected_rel_x in all_results:
@@ -192,18 +194,22 @@ class SmartCropper:
             # Determine Smoothing Factor
             # Normal: 0.2 (smooth)
             # Scene Cut: 1.0 (instant snap)
-            
+
             # Check if this frame (or near it due to stride) is a scene cut
             is_cut = False
             for offset in range(stride + 1):
-                if (idx + offset) in scene_cut_frames or (idx - offset) in scene_cut_frames:
+                if (idx + offset) in scene_cut_frames or (
+                    idx - offset
+                ) in scene_cut_frames:
                     is_cut = True
                     break
-            
+
             this_alpha = 1.0 if is_cut else 0.2
 
             # Apply Exponential Smoothing
-            current_rel_x = (this_alpha * target_rel_x) + ((1 - this_alpha) * current_rel_x)
+            current_rel_x = (this_alpha * target_rel_x) + (
+                (1 - this_alpha) * current_rel_x
+            )
 
             # Convert to absolute pixels
             center_pix = int(current_rel_x * width)

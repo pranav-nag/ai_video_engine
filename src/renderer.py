@@ -1,37 +1,19 @@
 import os
-import moviepy.config as mpc
 from moviepy.video.io.VideoFileClip import VideoFileClip
-from moviepy.video.VideoClip import TextClip
-from moviepy.video.compositing.CompositeVideoClip import CompositeVideoClip
-from moviepy.video.fx.all import crop, resize  # Fixed: Direct import for the crop function
 from dotenv import load_dotenv
+from src.fast_caption import SubtitleGenerator
 
-# Load Environment Variables for Safe Paths
+# Load Environment Variables
 load_dotenv()
 
-# --- CRITICAL: IMAGEMAGICK CONFIG ---
-# This points to the folder we just cleaned up
-IMAGEMAGICK_PATH = r"E:\AI_Video_Engine\assets\ImageMagick\convert.exe"
-
-if os.path.exists(IMAGEMAGICK_PATH):
-    # This tells MoviePy exactly where the exe is
-    mpc.change_settings({"IMAGEMAGICK_BINARY": IMAGEMAGICK_PATH})
-    print("✅ ImageMagick linked successfully (convert.exe found).")
-else:
-    # Diagnostic helper
-    print(f"❌ ERROR: ImageMagick NOT found at: {IMAGEMAGICK_PATH}")
-    print(
-        "👉 ACTION REQUIRED: Go to that folder and rename a copy of 'magick.exe' to 'convert.exe'"
-    )
+# Note: ImageMagick is no longer required since we use .ass subtitles instead of TextClip
 
 
 class VideoRenderer:
     def __init__(self):
         self.temp_dir = os.getenv("TEMP", r"E:\AI_Video_Engine\temp")
-        # 'Impact' is standard on Windows. Montserrat is better if installed.
-        self.font = "Impact"
-        self.fontsize = 60
-        self.stroke_width = 2
+        if not os.path.exists(self.temp_dir):
+            os.makedirs(self.temp_dir)
 
     def render_clip(
         self,
@@ -45,11 +27,12 @@ class VideoRenderer:
         output_bitrate="auto",
         output_resolution="1080x1920",
         logger=None,
+        proglog_logger=None,
     ):
         """
         Renders a single viral clip with:
         1. 9:16 Crop (Dynamic Center)
-        2. Configurable Captions (Hormozi, Minimal, Neon)
+        2. ASS Subtitles (Karaoke + Pop)
         3. NVENC Acceleration (RTX 4060)
         """
         msg = f"🎬 Initializing Render: {output_path} | Style: {style_name}"
@@ -70,339 +53,223 @@ class VideoRenderer:
         # 2. Cut the segment
         start_t = clip_data["start"]
         end_t = clip_data["end"]
-        clip = original_clip.subclip(
+
+        # Buffer to avoid audio glitches at boundaries
+        clip = original_clip.subclipped(
             max(0, start_t), min(original_clip.duration, end_t)
         )
 
-        # 3. Calculate 9:16 Crop
-        target_w = int(clip.h * (9 / 16))
+        # 3. Dynamic Per-Frame 9:16 Crop (follows face)
+        src_w = original_clip.w
+        src_h = original_clip.h
+        crop_w = int(src_h * (9 / 16))
+        if crop_w > src_w:
+            crop_w = src_w
+        fps = original_clip.fps or 30.0
+        default_crop_x = (src_w - crop_w) // 2
 
-        # Calculate average face position for this segment to avoid "jittery" movement
-        segment_frames = [
-            crop_map.get(int((start_t + t) * original_clip.fps), original_clip.w // 2)
-            for t in range(int(end_t - start_t))
-        ]
+        # Pre-sort crop_map keys once for efficient interpolation
+        _sorted_keys = sorted(crop_map.keys()) if crop_map else []
 
-        if segment_frames:
-            avg_x = sum(segment_frames) / len(segment_frames)
-        else:
-            avg_x = (original_clip.w - target_w) // 2
+        def _interpolate_crop_x(t):
+            """Find the best crop_x for absolute time t using crop_map."""
+            frame_idx = int(t * fps)
+            # Direct hit
+            if frame_idx in crop_map:
+                return crop_map[frame_idx]
+            if not _sorted_keys:
+                return default_crop_x
+            # Binary search for bracketing keys
+            lo, hi = 0, len(_sorted_keys) - 1
+            while lo < hi:
+                mid = (lo + hi) // 2
+                if _sorted_keys[mid] < frame_idx:
+                    lo = mid + 1
+                else:
+                    hi = mid
+            # Interpolate between neighbors
+            if lo == 0:
+                return crop_map[_sorted_keys[0]]
+            if lo >= len(_sorted_keys):
+                return crop_map[_sorted_keys[-1]]
+            k_before = _sorted_keys[lo - 1]
+            k_after = _sorted_keys[lo]
+            if k_after == k_before:
+                return crop_map[k_before]
+            ratio = (frame_idx - k_before) / (k_after - k_before)
+            val = crop_map[k_before] + ratio * (crop_map[k_after] - crop_map[k_before])
+            val = int(val)
+            return max(0, min(val, src_w - crop_w))
 
-        # Fixed: Using the imported 'crop' function correctly
-        cropped_clip = crop(clip, x1=int(avg_x), y1=0, width=target_w, height=clip.h)
+        def dynamic_crop(get_frame, t):
+            """Per-frame crop that follows the face."""
+            frame = get_frame(t)
+            abs_t = start_t + t
+            cx = _interpolate_crop_x(abs_t)
+            # Boundary clamp
+            cx = max(0, min(cx, frame.shape[1] - crop_w))
+            return frame[:, cx : cx + crop_w]
 
-        # 4. Generate Captions based on Style
-        text_clips = []
-        words = clip_data.get("words", [])
+        cropped_clip = clip.transform(dynamic_crop)
+        # MoviePy 2.x: set the output dimensions after transform
+        cropped_clip = cropped_clip.with_effects(
+            []
+        )  # apply empty effects to refresh internals
+        cropped_clip.size = (crop_w, src_h)
 
-        # Style Configuration
-        # Style Configuration
-        if style_name == "Minimal":
-            font = "Arial"
-            fontsize = 40
-            color = "white"
-            stroke_color = "black"
-            stroke_width = 1
-            position_coords = ("center", clip.h * 0.8)  # Lower
-
-        elif style_name == "Neon":
-            font = "Impact"
-            fontsize = 70
-            color = "#00ffcc"  # Cyan
-            stroke_color = "#ff00ff"  # Magenta Outline
-            stroke_width = 2
-            position_coords = ("center", "center")
-
-        elif style_name == "Fire":
-            font = "Impact"
-            fontsize = 65
-            color = "#FF4500"  # OrangeRed
-            stroke_color = "#FFFF00"  # Yellow
-            stroke_width = 2
-            position_coords = ("center", "center")
-
-        elif style_name == "Futuristic":
-            font = "Arial"
-            fontsize = 60
-            color = "white"
-            stroke_color = "#00BFFF"  # DeepSkyBlue
-            stroke_width = 3
-            position_coords = ("center", clip.h * 0.7)
-
-        elif style_name == "Boxed":
-            font = "Impact"
-            fontsize = 60
-            color = "white"
-            stroke_color = None
-            stroke_width = 0
-            position_coords = ("center", clip.h * 0.75)
-            # bg_color will be handled by passing it to create_styled_text
-
-        else:  # Hormozi (Default)
-            font = "Impact"
-            fontsize = 60
-            color = "#FFD700"  # Gold
-            stroke_color = "black"
-            stroke_width = 4
-            position_coords = ("center", clip.h * 0.7)
-
-        # OVERRIDE WITH USER SETTINGS
-        if font_size:
-            fontsize = int(font_size)
-
-        # Map UI position strings to coordinates
-        if position == "top":
-            position_coords = ("center", clip.h * 0.1)
-        elif position == "bottom":
-            position_coords = ("center", clip.h * 0.75)
-        elif position == "center":
-            position_coords = ("center", "center")
-        # Else keep style default if passed None/Unknown (though main_ui passes valid ones)
-
-        # Helper for creating styled text
-        def create_styled_text(
-            txt,
-            font,
-            fsize,
-            color,
-            stroke_c,
-            stroke_w,
-            pos,
-            start,
-            end,
-            shadow_offset=None,
-            bg_color=None,
-        ):
-            clips_to_return = []
-
-            # 1. Shadow Layer (Background)
-            if shadow_offset and not bg_color:  # Don't do shadow if boxed
-                # Calculate shadow position
-                s_pos = pos
-                if isinstance(pos, tuple):
-                    # Try to offset the tuple elements if they are numbers
-                    x, y = pos
-                    off_x, off_y = shadow_offset
-
-                    new_x = x + off_x if isinstance(x, (int, float)) else x
-                    new_y = y + off_y if isinstance(y, (int, float)) else y
-                    s_pos = (new_x, new_y)
-
-                shadow_clip = (
-                    TextClip(
-                        txt,
-                        fontsize=fsize,
-                        font=font,
-                        color="black",
-                        method="caption",
-                        size=(target_w * 0.8, None),
-                    )
-                    .set_position(s_pos)
-                    .set_start(start)
-                    .set_end(end)
-                    .set_opacity(0.6)
-                )
-                clips_to_return.append(shadow_clip)
-
-            # 2. Main Layer
-            # Prepare args for TextClip
-            kwargs = {
-                "fontsize": fsize,
-                "font": font,
-                "color": color,
-                "method": "caption",
-                "size": (target_w * 0.8, None),
-            }
-            if stroke_c:
-                kwargs["stroke_color"] = stroke_c
-                kwargs["stroke_width"] = stroke_w
-            if bg_color:
-                kwargs["bg_color"] = bg_color
-
-            main_clip = (
-                TextClip(txt, **kwargs).set_position(pos).set_start(start).set_end(end)
-            )
-            clips_to_return.append(main_clip)
-
-            return clips_to_return
-
-        for word_info in words:
-            w_start = word_info["start"] - start_t
-            w_end = word_info["end"] - start_t
-
-            if w_end < 0 or w_start > clip.duration:
-                continue
-
-            try:
-                # "True Hormozi": Yellow + Black Stroke + Drop Shadow
-                # "Fire": Red + Yellow Stroke + Drop Shadow
-
-                current_shadow = None
-                current_bg = None
-
-                if style_name in ["Hormozi", "Fire"]:
-                    current_shadow = (4, 4)
-                elif style_name == "Boxed":
-                    current_bg = "#000000"  # Black box
-
-                # EMOJI MAPPING (Static "Viral" Dictionary)
-                EMOJI_MAPPING = {
-                    "MONEY": "💰", "CASH": "💵", "DOLLAR": "💲", "RICH": "🤑",
-                    "FIRE": "🔥", "HOT": "🥵", "BURN": "🎇",
-                    "HAPPY": "😊", "LAUGH": "😂", "FUNNY": "🤣", "SMILE": "😁",
-                    "SAD": "😢", "CRY": "😭",
-                    "LOVE": "❤️", "HEART": "💖", "LIKE": "👍",
-                    "ANGRY": "​​​​​​😡", "MAD": "🤬",
-                    "SCARY": "😱", "FEAR": "😨",
-                    "SHOCK": "😱", "OMG": "🙀", "WOW": "🤯",
-                    "STOP": "🛑", "WAIT": "✋",
-                    "TIME": "⏰", "CLOCK": "🕰️",
-                    "GOAL": "​​​​​​🎯", "KICK": "🦶",
-                    "WIN": "🏆", "VICTORY": "✌️",
-                    "BRAIN": "🧠", "THINK": "🤔", "IDEA": "💡",
-                    "DEAL": "🤝",
-                    "WORLD": "🌎",
-                    "KING": "👑", "QUEEN": "👸",
-                    "STAR": "⭐",
-                    "ROCKET": "🚀",
-                    "SKULL": "💀", "DEAD": "⚰️",
-                }
-
-                # Check for Emoji
-                clean_word = word_info["word"].upper().strip(",.!?")
-                emoji_char = EMOJI_MAPPING.get(clean_word)
-                
-                # Create Text Clips
-                generated_clips = create_styled_text(
-                    word_info["word"].upper(),
-                    font,
-                    fontsize,
-                    color,
-                    stroke_color,
-                    stroke_width,
-                    position_coords,
-                    w_start,
-                    w_end,
-                    shadow_offset=current_shadow,
-                    bg_color=current_bg,
-                )
-                
-                # Apply "Pop" Animation (Zoom In)
-                # We apply it to the Main Clip (last one in generated_clips)
-                if generated_clips:
-                    main_clip = generated_clips[-1]
-                    # Simple pop: Start at 1.0, grow to 1.1 or pulse
-                    # t goes from 0 to duration
-                    # We want a quick pop at the start
-                    def pop_effect(t):
-                        # Grow from 0.8 to 1.1 in first 0.1s, then settle at 1.0
-                        if t < 0.1:
-                            return 0.8 + (3 * t)  # 0.8 -> 1.1
-                        return 1.1 - (0.5 * (t - 0.1)) # 1.1 -> settles down slightly
-                    
-                    # Apply resize safely
-                    # Note: resize with function can be slow. Let's do a simple linear zoom for performance.
-                    # generated_clips[-1] = main_clip.resize(lambda t: 1 + 0.1 * t) 
-                    pass # Keeping it simple for NVENC stability for now. Animation adds render time.
-
-                # If Emoji found, create a separate clip above the text
-                if emoji_char:
-                    # Calculated position: same X, but Y is higher (minus offset)
-                    # This relies on position_coords being a tuple or string.
-                    # Simplified: Just put it "Center-ish" but higher.
-                    emoji_y = clip.h * 0.6 if position == "center" else clip.h * 0.55
-                    
-                    # Emoji font fallback (Segoe UI Emoji for Windows)
-                    emoji_clip = (TextClip(
-                        emoji_char,
-                        fontsize=fontsize + 20, # Slightly bigger
-                        font="Segoe UI Emoji",
-                        color="white",
-                        method="caption",
-                        size=(target_w, None)
-                    )
-                    .set_position(("center", emoji_y))
-                    .set_start(w_start)
-                    .set_end(w_end))
-                    
-                    text_clips.append(emoji_clip)
-
-                text_clips.extend(generated_clips)
-
-            except Exception as e:
-                print(f"⚠️ TextClip failed for word '{word_info['word']}': {e}")
-
-        # 5. Composite
-        final_clip = CompositeVideoClip([cropped_clip] + text_clips)
-
-        # 5.5. Apply Resolution Scaling (if requested)
+        # 3.5 Apply Resolution Scaling (if requested)
         if output_resolution != "source":
             try:
-                target_w, target_h = map(int, output_resolution.split("x"))
-                final_clip = final_clip.resize((target_w, target_h))
-            except:
-                pass  # If parsing fails, keep original
+                out_w, out_h = map(int, output_resolution.split("x"))
+                cropped_clip = cropped_clip.resized((out_w, out_h))
+                msg = f"📐 Scaled to {out_w}x{out_h}"
+                print(msg)
+                if logger:
+                    logger.log(msg, "INFO")
+            except Exception as e:
+                msg = f"⚠️ Resolution scaling failed: {e} — using source size"
+                print(msg)
+                if logger:
+                    logger.error(msg)
 
-        # 6. Render with NVENC
+        # 4. Generate ASS Subtitles
+
+        generator = SubtitleGenerator(
+            style_name=style_name,
+            font_size=int(font_size),
+            position=position,
+        )
+
+        # Adjust timestamp relative to clip start
+        words_relative = []
+        for w in clip_data.get("words", []):
+            words_relative.append(
+                {
+                    "word": w["word"],
+                    "start": w["start"] - start_t,
+                    "end": w["end"] - start_t,
+                }
+            )
+
+        ass_path = os.path.join(
+            self.temp_dir, f"captions_{os.path.basename(output_path)}.ass"
+        )
+        # Ensure path uses forward slashes for FFmpeg compatibility
+        ass_path = ass_path.replace("\\", "/")
+
+        generator.generate_ass_file(words_relative, ass_path)
+
+        # 5. Render with NVENC + Subtitles Filter
         temp_audio = os.path.join(self.temp_dir, "temp-audio.m4a")
 
         try:
-            msg = "🚀 Rendering with NVIDIA NVENC (RTX 4060)..."
+            msg = "🚀 Rendering with NVIDIA NVENC (RTX 4060) + ASS Captions..."
             print(msg)
             if logger:
                 logger.log(msg, "INFO")
 
-            # Determine encoding params based on bitrate selection
-            if output_bitrate == "auto":
-                # Use CQ (Constant Quality) mode
-                ffmpeg_params = ["-preset", "p4", "-cq", "24"]
-            else:
-                # Use VBR (Variable Bitrate) mode
-                ffmpeg_params = [
-                    "-preset",
-                    "p4",
-                    "-b:v",
-                    output_bitrate,
-                    "-maxrate",
-                    output_bitrate,
-                    "-bufsize",
-                    output_bitrate,
-                ]
+            # Escape colons in path for ffmpeg filter (e: -> e\:)
+            # Actually, standard forward slashes usually work if quoted.
+            # Best safe way for subtitles filter on Windows:
+            # subtitles='E\:/path/to/file.ass'
 
-            final_clip.write_videofile(
+            # Simple replace for drive letter colon
+            safe_ass_path = ass_path.replace(":", "\\:")
+
+            # --- Quality Params (Premiere Pro YouTube Export Match) ---
+            extra_params = []
+            if output_bitrate == "auto":
+                # VBR targeting 26 Mbps (Premiere Pro "Match Source - High Bitrate")
+                extra_params.extend(
+                    [
+                        "-b:v",
+                        "26M",
+                        "-maxrate",
+                        "30M",
+                        "-bufsize",
+                        "52M",
+                    ]
+                )
+            else:
+                extra_params.extend(
+                    [
+                        "-b:v",
+                        output_bitrate,
+                        "-maxrate",
+                        output_bitrate,
+                        "-bufsize",
+                        output_bitrate,
+                    ]
+                )
+
+            # FULL FFmpeg Params — Premiere Pro compatible
+            ffmpeg_params = [
+                "-preset",
+                "p4",
+                "-profile:v",
+                "high",
+                "-level:v",
+                "4.2",
+                "-pix_fmt",
+                "yuv420p",
+                "-vf",
+                f"subtitles='{safe_ass_path}'",
+            ] + extra_params
+
+            cropped_clip.write_videofile(
                 output_path,
                 codec="h264_nvenc",
                 audio_codec="aac",
+                audio_bitrate="320k",
                 temp_audiofile=temp_audio,
                 remove_temp=True,
                 ffmpeg_params=ffmpeg_params,
                 threads=8,
-                fps=24,
-                logger=None,
+                fps=fps,
+                logger=proglog_logger,
             )
+
             msg = f"✅ NVENC Success: {output_path}"
             print(msg)
             if logger:
                 logger.log(msg, "INFO", "GREEN")
+
         except Exception as e:
             msg = f"⚠️ NVENC Failed. Falling back to CPU... Error: {e}"
             print(msg)
             if logger:
                 logger.error(msg)
 
-            final_clip.write_videofile(
+            # Fallback CPU Rendering (still high quality)
+            cropped_clip.write_videofile(
                 output_path,
                 codec="libx264",
                 audio_codec="aac",
+                audio_bitrate="320k",
                 temp_audiofile=temp_audio,
                 remove_temp=True,
-                preset="ultrafast",
-                fps=24,
-                logger=None,  # MoviePy's internal logger is noisy
+                preset="slow",
+                ffmpeg_params=[
+                    "-profile:v",
+                    "high",
+                    "-level:v",
+                    "4.2",
+                    "-pix_fmt",
+                    "yuv420p",
+                    "-crf",
+                    "18",
+                    "-vf",
+                    f"subtitles='{safe_ass_path}'",
+                ],
+                fps=fps,
+                logger=proglog_logger,
             )
 
+        # Cleanup
         original_clip.close()
-        final_clip.close()
+        cropped_clip.close()
+        if os.path.exists(ass_path):
+            os.remove(ass_path)
 
 
 if __name__ == "__main__":
