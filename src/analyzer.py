@@ -92,6 +92,104 @@ def snap_to_scenes(clip_start, clip_end, scenes, max_shift=3.0):
     return best_start, best_end
 
 
+def _build_system_prompt(content_type, min_sec, max_sec):
+    """
+    Builds content-type-aware system prompt for the LLM.
+    
+    Args:
+        content_type: "podcast", "solo", or "auto"
+        min_sec: Minimum clip duration
+        max_sec: Maximum clip duration
+    """
+    # --- Shared rules (apply to ALL content types) ---
+    shared_rules = (
+        "RULES:\n"
+        f"1. STRICT DURATION CONSTRAINT: Each clip MUST be between {min_sec} and {max_sec} seconds. "
+        "   Do NOT output clips shorter or longer than this range. Verify duration before outputting.\n"
+        "2. STRUCTURE: Ensure the clip has a clear HOOK (opening that grabs attention) and PAYOFF (satisfying conclusion). "
+        "   Do NOT cut off mid-sentence or mid-thought.\n"
+        "3. SCENE BOUNDARIES: Prefer cutting at Scene Boundaries if available, BUT valid duration takes priority.\n"
+    )
+
+    # --- Scoring criteria (shared) ---
+    score_criteria = (
+        "SCORE CRITERIA (0-100):\n"
+        "   - 90-100: VIRAL POTENTIAL. Would make someone stop scrolling and share immediately.\n"
+        "   - 75-89: Strong content. Engaging, clear, and worth watching.\n"
+        "   - < 75: Not compelling enough. Do NOT include.\n"
+    )
+
+    # --- Output format (shared) ---
+    output_format = (
+        "OUTPUT: Return ONLY valid JSON. "
+        'Format: {"clips": [{"start": float, "end": float, "score": int, "hook": "string", "reason": "string", '
+        '"suggested_emojis": ["emoji1", "emoji2"], "duration_type": "short_burst" | "story_mode"}]}'
+    )
+
+    if content_type == "podcast":
+        system_prompt = (
+            "You are an expert Video Editor specializing in clipping PODCAST and INTERVIEW content for viral Shorts/TikToks/Reels. "
+            "Your goal is to find the MOST shareable, standalone moments from multi-speaker conversations. "
+            "You understand that great podcast clips come from the DYNAMIC between speakers, not just one person talking.\n\n"
+            + shared_rules
+            + "4. CONTENT FILTER (PODCAST-SPECIFIC — CRITICAL):\n"
+            "   ✅ KEEP (High Priority):\n"
+            "      - 🔥 HEATED EXCHANGES: Disagreements, debates, or pushback between speakers\n"
+            "      - 😲 REVELATION MOMENTS: 'Wait, you did WHAT?!' — shocking admissions or stories\n"
+            "      - 😂 NATURAL HUMOR: Genuine laughs, witty comebacks, roasts, or awkward moments\n"
+            "      - 💡 WISDOM DROPS: Calm but profound insights that make the viewer think deeply\n"
+            "      - 🎤 STORY ARCS: A guest telling a compelling personal story with a clear beginning, tension, and payoff\n"
+            "      - ❓ CONTRARIAN TAKES: 'Actually, that's completely wrong because...' — goes against popular opinion\n"
+            "      - 🤯 UNEXPECTED CONTEXT: Surprising credentials, numbers, or background ('I was homeless, now I run a $100M company')\n"
+            "   ❌ DISCARD (Low Viral Value):\n"
+            "      - Small talk, pleasantries, or filler ('That's a great question', 'Yeah, absolutely')\n"
+            "      - Overly technical jargon without emotional payoff\n"
+            "      - Segments where only one person speaks in a dry, lecture-like monologue\n"
+            "      - Sponsor reads, self-promotion, or 'make sure to subscribe'\n"
+            "      - Incomplete exchanges where the conversation gets cut before the punchline or conclusion\n"
+            "5. PODCAST-SPECIFIC SCORING BONUS:\n"
+            "   - +10 points: Clip contains a genuine laugh or emotional reaction\n"
+            "   - +10 points: Clip has a clear setup → punchline/reveal structure\n"
+            "   - +5 points: Clip includes a quotable one-liner ('That's the problem with...', 'Here's what nobody tells you...')\n"
+            "   - -15 points: Clip is just one person talking without any interaction\n"
+            + score_criteria
+            + output_format
+        )
+    elif content_type == "solo":
+        system_prompt = (
+            "You are an expert Video Editor for viral TikToks and Shorts (Alex Hormozi style). "
+            "Your goal is to find the MOST engaging, standalone segments from the transcript that tell a complete mini-story. "
+            "You have access to the transcript and (optionally) visual scene boundaries.\n\n"
+            + shared_rules
+            + "4. CONTENT FILTER (SOLO CONTENT — CRITICAL):\n"
+            "   ✅ KEEP: Emotional realizations, strong opinions, contrarian views, funny moments, 'wait for it' builds, "
+            "motivational calls-to-action, personal vulnerability, or data-backed claims.\n"
+            "   ❌ DISCARD: Dry factual descriptions without emotional weight, generic intros ('Hello, welcome to...'), "
+            "incomplete thoughts, or low-energy rambling.\n"
+            + score_criteria
+            + output_format
+        )
+    else:  # "auto" — let the LLM figure it out
+        system_prompt = (
+            "You are an expert Video Editor for viral TikToks, Shorts, and Reels. "
+            "Your goal is to find the MOST engaging, standalone segments from the transcript. "
+            "FIRST, determine if this is a PODCAST/INTERVIEW (multiple speakers) or SOLO content (single speaker), "
+            "then apply the appropriate strategy:\n"
+            "- For PODCASTS: Prioritize speaker dynamics — debates, reactions, humor, revelations, and exchanges.\n"
+            "- For SOLO: Prioritize emotional hooks, story arcs, contrarian takes, and motivational moments.\n\n"
+            + shared_rules
+            + "4. CONTENT FILTER (CRITICAL):\n"
+            "   ✅ KEEP: Heated exchanges, shocking revelations, genuine humor, emotional realizations, "
+            "strong opinions, contrarian views, 'wait for it' builds, or profound wisdom drops.\n"
+            "   ❌ DISCARD: Filler, small talk, generic intros, sponsor reads, dry monologues without payoff, "
+            "incomplete thoughts, or low-energy segments.\n"
+            + score_criteria
+            + output_format
+        )
+
+    return system_prompt
+
+
 def analyze_transcript(
     transcript_text,
     min_sec=30,  # UPDATED default: 30s
@@ -99,10 +197,12 @@ def analyze_transcript(
     logger=None,
     video_path=None,
     progress_callback=None,
+    content_type="auto",  # NEW: "auto", "podcast", or "solo"
 ):
     """
     Sends transcript to Ollama.
     Now optionally uses visual SCENE BOUNDARIES to guide the AI.
+    Supports content_type: 'auto' (detect), 'podcast', or 'solo'.
     """
     if not ensure_ollama_running():
         return [], []
@@ -177,7 +277,8 @@ def analyze_transcript(
                 logger.log(msg, "INFO")
 
             chunk_clips, _ = analyze_transcript(
-                chunk_text, min_sec, max_sec, logger, video_path=None
+                chunk_text, min_sec, max_sec, logger, video_path=None,
+                content_type=content_type,
             )
             all_clips.extend(chunk_clips)
 
@@ -194,25 +295,10 @@ def analyze_transcript(
 
     # --- Existing Single-Chunk Logic ---
 
-    system_prompt = (
-        "You are an expert Video Editor for viral TikToks and Shorts (Alex Hormozi style). "
-        "Your goal is to find the MOST engaging, standalone segments from the transcript that tell a complete mini-story. "
-        "You have access to the transcript and (optionally) visual scene boundaries. "
-        "RULES:\n"
-        f"1. STRICT DURATION CONSTRAINT: Each clip MUST be between {min_sec} and {max_sec} seconds. "
-        "   Do NOT output clips shorter or longer than this range. Verify duration before outputting. "
-        "2. CONTENT FILTER (CRITICAL): "
-        "   - ✅ KEEP: Emotional realizations, strong opinions, contrarian views, funny moments, or 'wait for it' builds. "
-        "   - ❌ DISCARD: Dry factual descriptions, introductions ('Hello, welcome to...'), or incomplete thoughts. "
-        "3. STRUCTURE: Ensure the clip has a specific HOOK (start) and PAYOFF (end). Do not cut off mid-sentence. "
-        "4. SCENE BOUNDARIES: Prefer cutting at Scene Boundaries if available, BUT prioritization of valid duration is higher. "
-        "5. SCORE CRITERIA (0-100): "
-        "   - 90-100: RAVING FAN potential. High energy, controversial, or deep emotional resonance. "
-        "   - 75-89: Solid content. Good story or clear advice. "
-        "   - < 75: Boring. Ignore. "
-        "6. Output Format: Return ONLY valid JSON."
-        'Format: {"clips": [{"start": float, "end": float, "score": int, "hook": "string", "reason": "string", "suggested_emojis": ["😂", "🔥"], "duration_type": "short_burst" | "story_mode"}]}'
-    )
+    system_prompt = _build_system_prompt(content_type, min_sec, max_sec)
+
+    if logger:
+        logger.log(f"📝 Content Type: {content_type.upper()}", "INFO", "GREY")
 
     # Payload for /api/chat
     payload = {
