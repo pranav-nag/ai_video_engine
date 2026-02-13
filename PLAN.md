@@ -38,6 +38,12 @@
 - [x] **Dynamic Karaoke Captions**: Refactored `renderer.py` to use `.ass` subtitles.
 - [x] **Style Presets**: Implemented 4 professional styles.
 
+### UX & Polish (2026-02-11)
+- [x] **Filename Clarity**: Changed output to `ClipX_Start09m00s_Dur45s.mp4`.
+- [x] **Content Type UI**: Added Auto/Podcast/Solo dropdown.
+- [x] **UI Label Fix**: Corrected "Target Length" static text.
+
+
 
 ---
 
@@ -51,6 +57,10 @@
 - [ ] **Auto-Hashtags**: LLM-generated viral metadata
 - [ ] **Batch Processing**: Process multiple videos in queue
 
+### Feature Requests
+- [ ] **B-Roll Integration**: Logic to insert B-Roll during "dry" scenes (User Priority).
+
+
 ### 🔧 Tech Debt / Long Term
 - [ ] **Replace CTranslate2**: Monitor `faster-whisper` or `ctranslate2` repos for a fix to the CUDA destructor segfault (Exit 0xC0000005).
     - Current workaround: Subprocess isolation + Exit code suppression.
@@ -60,5 +70,7 @@
 
 ## 🛑 BUGS / KNOWN ISSUES
 - **UI Padding**: Sidebar has unwanted top/bottom gaps (User Priority #1)
-- **Bare except blocks**: Lint warnings in main_ui.py and analyzer.py
+- [ ] **Bare except blocks**: Lint warnings in main_ui.py and analyzer.py
+- **Caption Size Bug**: User reports 80px settings ignored (Debugging in progress).
+
 - **MediaPipe Warnings**: `inference_feedback_manager` spam in console (cosmetic)

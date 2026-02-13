@@ -300,8 +300,22 @@ def main(page: ft.Page):
         inactive_color=ft.colors.GREY_700,
     )
 
+    # Content Type Selector (NEW)
+    content_type_dropdown = ft.Dropdown(
+        label="Content Type (AI Mode)",
+        options=[
+            ft.dropdown.Option("auto", "🤖 Auto-Detect (Smart)"),
+            ft.dropdown.Option("podcast", "🎙️ Podcast / Interview (Multi-Speaker)"),
+            ft.dropdown.Option("solo", "👤 Solo Creator (Monologue)"),
+        ],
+        value="auto",
+        text_size=14,
+        border_radius=10,
+        border_color=ft.colors.GREY_700,
+    )
+
     duration_label = ft.Text(
-        "Target Length: 15s - 60s", size=13, color=ft.colors.GREEN_400
+        "Target Length: 30s - 60s", size=13, color=ft.colors.GREEN_400
     )
 
     # Output Quality Controls
@@ -532,6 +546,7 @@ def main(page: ft.Page):
         focus_region,
         output_bitrate,
         output_resolution,
+        content_type,  # NEW
     ):
         nonlocal is_processing
         video_path = None  # Initialize early so `finally` block can reference it safely
@@ -540,7 +555,7 @@ def main(page: ft.Page):
             video_logger.setup("Session_Start", ui_callback=log_to_ui)
 
             # 1. DOWNLOAD
-            update_progress(0.05, "Initializing engine...")
+            update_progress(0.05, f"Initializing engine ({content_type})...")
             time.sleep(0.1)
 
             if cancel_event.is_set():
@@ -629,6 +644,7 @@ def main(page: ft.Page):
                     logger=video_logger,
                     video_path=video_path,
                     progress_callback=ai_progress,
+                    content_type=content_type,  # Pass user selection
                 )
             except Exception as e:
                 import traceback
@@ -711,11 +727,19 @@ def main(page: ft.Page):
                     break
 
                 safe_title = sanitize_filename(video_title[:40])
-                # Format: VideoTitle_20260210_221820_Clip1_15s_Hormozi.mp4
+
+                # Calculate Duration
                 clip_start_sec = int(clip["start"])
+                clip_end_sec = int(clip["end"])
+                clip_duration = clip_end_sec - clip_start_sec
+
+                # Format: VideoTitle_Start09m00s_Dur45s_Style.mp4
+                # This explicitly disambiguates "540s" (start) from actual duration
+                start_fmt = f"{clip_start_sec // 60:02d}m{clip_start_sec % 60:02d}s"
+
                 clip_filename = (
                     f"{safe_title.replace(' ', '_')}_{batch_timestamp}_"
-                    f"Clip{i + 1}_{clip_start_sec}s_{style}.mp4"
+                    f"Clip{i + 1}_Start{start_fmt}_Dur{clip_duration}s_{style}.mp4"
                 )
                 output_path = os.path.join(output_folder, clip_filename)
 
@@ -725,7 +749,11 @@ def main(page: ft.Page):
                     if w["start"] >= clip["start"] and w["end"] <= clip["end"]
                 ]
 
-                video_logger.log(f"🎞️ Rendering Clip {i + 1}...", ft.colors.BLUE_200)
+                # Update Log to be explicit
+                video_logger.log(
+                    f"🎞️ Rendering Clip {i + 1} (Start: {format_seconds(clip_start_sec)}, Dur: {clip_duration}s)...",
+                    ft.colors.BLUE_200,
+                )
                 renderer.render_clip(
                     video_path,
                     clip,
@@ -861,6 +889,7 @@ def main(page: ft.Page):
                 focus_dropdown.value,
                 output_bitrate_dropdown.value,
                 output_resolution_dropdown.value,
+                content_type_dropdown.value,  # Add Content Type
             ),
             daemon=True,
         ).start()
@@ -918,11 +947,23 @@ def main(page: ft.Page):
                 content=ft.Container(
                     content=ft.Column(
                         [
-                            ft.Text("Clip Length", weight=ft.FontWeight.BOLD),
+                            ft.Container(height=10),
+                            ft.Text(
+                                "3. AI Intelligence",
+                                size=14,
+                                weight=ft.FontWeight.BOLD,
+                                color=ft.colors.BLUE_200,
+                            ),
+                            content_type_dropdown,  # Added Dropdown here
                             duration_label,
                             duration_slider,
-                            ft.Divider(),
-                            ft.Text("Output Quality", weight=ft.FontWeight.BOLD),
+                            ft.Container(height=10),
+                            ft.Text(
+                                "4. Output Format",
+                                size=14,
+                                weight=ft.FontWeight.BOLD,
+                                color=ft.colors.BLUE_200,
+                            ),
                             output_bitrate_dropdown,
                             output_resolution_dropdown,
                             ft.Divider(),

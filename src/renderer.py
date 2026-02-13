@@ -35,10 +35,10 @@ class VideoRenderer:
         2. ASS Subtitles (Karaoke + Pop)
         3. NVENC Acceleration (RTX 4060)
         """
-        msg = f"🎬 Initializing Render: {output_path} | Style: {style_name}"
+        msg = f"🎬 Initializing Render: {output_path} | Style: {style_name} | Font Size: {font_size}px"
         print(msg)
         if logger:
-            logger.log(msg, "INFO")
+            logger.log(msg, "INFO", "BLUE")
 
         # 1. Load Video
         try:

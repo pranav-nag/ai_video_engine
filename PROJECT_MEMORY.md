@@ -100,6 +100,9 @@ HF_HOME=E:/AI_Video_Engine/models
 - **Professional Output**: 26 Mbps VBR video, 320 kbps AAC, 1080x1920, h264_nvenc acceleration.
 
 - **Human-readable ETA**: All progress displays use `mm:ss` format.
+- **Explicit Filenames**: Output files use `Clip1_Start09m00s_Dur45s` to avoid confusion between start time and duration.
+- **Content Type UI**: User can select "Auto/Podcast/Solo" to bias the analysis.
+
 
 
 ### ⚠️ Known Issues / "Gotchas"
@@ -150,6 +153,8 @@ ollama list
 13. **CTranslate2 Segfault is Uncatchable (2026-02-10 23:45)**: The CTranslate2 C++ destructor segfaults during CUDA cleanup regardless of whether you use `del`, `None`, or any Python-level workaround. This is a C-level access violation that `try/except` **cannot catch**. **FIX**: Run Whisper transcription in a **subprocess** (`transcribe_worker.py`). When the subprocess exits, the OS reclaims all GPU memory. Even if the destructor segfaults, only the subprocess dies. The JSON result file is written *before* the crash, so data is preserved.
 14. **Missing `time_to_ass` Method (2026-02-11 00:00)**: `SubtitleGenerator` in `fast_caption.py` called `self.time_to_ass()` but the method was never defined — instant crash at rendering. **FIX**: Added the method that converts float seconds to ASS timecode `H:MM:SS.CC`. Also switched Ollama analysis from blocking `stream: False` to `stream: True` with live token progress feedback.
 15. **Suppressing 'Safe' Segfaults (2026-02-11 00:15)**: The CTranslate2 library has a known bug where its C++ destructor segfaults (Exit Code 0xC0000005) when freeing CUDA memory at process exit. This is **unfixable** from Python as it happens after the global interpreter shuts down. **STRATEGY**: Since the transcription data is already saved to disk, we treat this specific exit code as "Success" and suppress the warning log. This is a permanent limitation of the current `faster-whisper` backend version.
+16. **Start Time vs Duration Confusion (2026-02-11 23:55)**: Users seeing `Clip1_540s` in filenames assumed "540s" was the duration (9 mins) and reported it as a bug. **FIX**: Always include explicit labels like `Start09m00s` and `Dur45s` in user-facing strings/filenames. Ambiguity = perceived bug.
+
  - ~~**MoviePy 2.0 Compatibility**: `subclip` removed in v2.0~~ — Already using `subclipped`. Resolved.
  
 ---
