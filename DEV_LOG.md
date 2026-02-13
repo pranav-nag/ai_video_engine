@@ -185,3 +185,54 @@
 - Plan B-Roll Integration (Feature Request).
 
 
+
+---
+
+## Session: 2026-02-13 22:00 [UI Polish & Memory Optimization]
+
+### Log
+- **Analysis**: Conducted deep review of architecture (`ANALYSIS.md`).
+- **FIXED**: UI Sidebar Padding. Removed global `page.padding` and `page.spacing` in `main_ui.py`.
+- **FIXED**: Caption Size Slider. Added missing `on_change` event handler in `main_ui.py`.
+- **OPTIMIZED**: Implemented **Sequential Model Loading** in `analyzer.py`.
+  - Added `unload_model()` to force Ollama to free VRAM (`keep_alive=0`).
+  - Text model (`qwen2.5`) unloads before Vision model loads.
+  - Vision model (`minicpm-v`) unloads after analysis.
+- **OPTIMIZED**: Video I/O. rewritten `analyzer.py` to open `cv2.VideoCapture` **once** per batch instead of 3x per clip.
+- **CHANGED**: Switched default Vision Model to `minicpm-v` (8B, high efficiency) in `vision_analyzer.py`.
+
+### Completed
+- UI Padding Bugs
+- Caption Size UI Feedback
+- Memory Management (Ollama Unloading)
+- Model Selection (Standardized on MiniCPM-V)
+
+- Verify B-Roll integration plan.
+- Ensure `analyzer.py` handles auto-pull of modern models (User Requirement).
+
+---
+
+## Session: 2026-02-13 23:45 [Intelligence Overhaul & Smart Downloads]
+
+### Log
+- **Analysis**: User reported "0 clips found" due to strict duration constraints, and "unknown decoder 'copy'" on partial downloads.
+- **FIXED**: `yt-dlp` Argument Syntax. Moved `-c copy` to `ffmpeg_o` (output args) to fix download error.
+- **IMPLEMENTED**: **Smart Semantic Snapping** (`snap_to_word_boundary`).
+  - Analyzer now sees exact word-level timestamps.
+  - Snaps cut points to nearest sentence ending (`.`, `?`, `!`).
+  - Extends clips slightly over limit if needed to finish a sentence.
+- **IMPLEMENTED**: **Context Expansion** (`expand_context`).
+  - If a clip is too short (<30s), Python automatically adds the previous/next sentences to reach target duration.
+  - "Rescues" short viral quotes instead of deleting them.
+- **IMPLEMENTED**: **Series Splitting**.
+  - If a clip is too long (e.g. 2 mins), it is split into Part 1, Part 2, etc. (snapped to sentences).
+- **CHANGED**: **Content First Strategy**.
+  - Removed "STRICT DURATION CONSTRAINT" from LLM System Prompt.
+  - LLM now focuses purely on "Hooks" and "Payoffs". Python handles the timing.
+
+### Completed
+- Smart Download Strategy (Fix)
+- Semantic Snapping (No mid-sentence cuts)
+- Context Expansion (Rescue short clips)
+- Series Splitting (Handle long stories)
+

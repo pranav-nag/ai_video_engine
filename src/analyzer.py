@@ -20,21 +20,65 @@ CHUNK_SIZE = 4000
 
 
 def ensure_ollama_running():
-    """Checks if Ollama is running and verifies model availability."""
+    """Checks if Ollama is running and ensures model is available (auto-pulls if missing)."""
     try:
         response = requests.get(f"{OLLAMA_URL}/api/tags")
         if response.status_code == 200:
             models = [m["name"] for m in response.json().get("models", [])]
-            print(f"✅ Ollama is running. Available: {models}")
+            print(f"✅ Ollama is running.")
 
             if OLLAMA_MODEL not in models:
-                print(f"⚠️  WARNING: Model '{OLLAMA_MODEL}' not found in Ollama!")
-                print(f"👉 Fix: Run 'ollama pull {OLLAMA_MODEL}' in terminal.")
-                return False
+                print(f"⚠️  Model '{OLLAMA_MODEL}' not found locally.")
+                print(
+                    f"⬇️  Auto-pulling '{OLLAMA_MODEL}' from Ollama library (this may take a while)..."
+                )
+                try:
+                    # Stream the pull request to show progress
+                    pull_resp = requests.post(
+                        f"{OLLAMA_URL}/api/pull",
+                        json={"name": OLLAMA_MODEL, "stream": True},
+                        stream=True,
+                    )
+                    pull_resp.raise_for_status()
+                    for line in pull_resp.iter_lines():
+                        if line:
+                            data = json.loads(line)
+                            status = data.get("status", "")
+                            completed = data.get("completed", 0)
+                            total = data.get("total", 1)
+                            if total > 0:
+                                percent = int((completed / total) * 100)
+                                print(
+                                    f"\rDownloading {OLLAMA_MODEL}: {status} {percent}%",
+                                    end="",
+                                    flush=True,
+                                )
+                            else:
+                                print(
+                                    f"\rDownloading {OLLAMA_MODEL}: {status}",
+                                    end="",
+                                    flush=True,
+                                )
+                    print(f"\n✅ Model '{OLLAMA_MODEL}' installed successfully.")
+                except Exception as e:
+                    print(f"\n❌ Failed to auto-pull model: {e}")
+                    return False
             return True
     except Exception:
         print("❌ Ollama is NOT running. Please start it.")
         return False
+
+
+def unload_model(model_name):
+    """Explicitly unloads a model from VRAM to prevent OOM."""
+    try:
+        # Keep-alive 0 triggers immediate unload
+        requests.post(
+            f"{OLLAMA_URL}/api/chat", json={"model": model_name, "keep_alive": 0}
+        )
+        print(f"👋 Unloaded model: {model_name}")
+    except Exception as e:
+        print(f"⚠️ Could not unload model {model_name}: {e}")
 
 
 def format_transcript_with_time(word_list):
@@ -92,10 +136,175 @@ def snap_to_scenes(clip_start, clip_end, scenes, max_shift=3.0):
     return best_start, best_end
 
 
+def snap_to_word_boundary(start, end, word_list, min_dur, max_dur):
+    """
+    Extends or trims timestamps to the nearest semantic boundary (., ?, !)
+    to prevent mid-sentence cuts.
+    """
+    if not word_list:
+        return start, end
+
+    # Helper: Find word index close to a timestamp
+    def find_idx(ts):
+        closest_i = 0
+        min_diff = float("inf")
+        for i, w in enumerate(word_list):
+            diff = abs(w["start"] - ts)
+            if diff < min_diff:
+                min_diff = diff
+                closest_i = i
+        return closest_i
+
+    # 1. Snap END (Most Critical)
+    # We want to finish the sentence. Look fast forward up to 8 seconds for a . or ?
+    end_idx = find_idx(end)
+    original_end_idx = end_idx
+
+    found_end = False
+    # Look forward (extension) first - prefer finishing the thought
+    for i in range(end_idx, min(len(word_list), end_idx + 15)):  # Look ahead 15 words
+        w_text = word_list[i]["word"]
+        if any(p in w_text for p in [".", "?", "!"]):
+            new_end = word_list[i]["end"]
+            # Only accept if within duration limits
+            if (new_end - start) <= max_dur + 5.0:  # Allow 5s variance over max
+                end = new_end
+                found_end = True
+                print(f"    ✨ Snapped END: Extended to finish sentence: '{w_text}'")
+                break
+
+    if not found_end:
+        # Look backward (trim) if extension failed
+        for i in range(end_idx, max(-1, end_idx - 10), -1):
+            w_text = word_list[i]["word"]
+            if any(p in w_text for p in [".", "?", "!"]):
+                new_end = word_list[i]["end"]
+                if (new_end - start) >= min_dur - 2.0:  # Allow 2s variance under min
+                    end = new_end
+                    found_end = True
+                    print(f"    ✨ Snapped END: Trimmed to finish sentence: '{w_text}'")
+                    break
+
+    # 2. Snap START (Less Critical, usually AI gets this right)
+    # But let's check if the previous word was a punctuation, meaning this is a fresh start
+    start_idx = find_idx(start)
+    # Ideally, word_list[start_idx-1] should end with punctuation.
+    if start_idx > 0:
+        prev_word = word_list[start_idx - 1]["word"]
+        # If prev word didn't end sentence, maybe we started mid-sentence?
+        # Try to find nearest previous sentence end
+        if not any(p in prev_word for p in [".", "?", "!"]):
+            # Look back to find a clean start
+            for i in range(start_idx - 1, max(-1, start_idx - 10), -1):
+                w_text = word_list[i]["word"]
+                if any(p in w_text for p in [".", "?", "!"]):
+                    # Found the end of previous sentence, so our start is i+1
+                    new_start = word_list[i + 1]["start"]
+                    if (end - new_start) <= max_dur + 5.0:
+                        start = new_start
+                        print(f"    ✨ Snapped START: Aligned to sentence start.")
+                    break
+
+    return start, end
+
+
+def expand_context(start, end, word_list, min_sec):
+    """
+    Intelligently expands a clip to meet minimum duration requirements
+    by adding surrounding sentences (context) rather than rejecting it.
+
+    Args:
+        start: Clip start time (seconds)
+        end: Clip end time (seconds)
+        word_list: Full list of word dicts with timestamps
+        min_sec: Minimum duration required
+
+    Returns:
+        (new_start, new_end)
+    """
+    duration = end - start
+    if duration >= min_sec:
+        return start, end
+
+    # We need to add at least (min_sec - duration) seconds
+    needed = min_sec - duration
+    print(
+        f"    🧠 Expanding context: Clip is {duration:.1f}s (Min: {min_sec}s). Need +{needed:.1f}s."
+    )
+
+    # Find current indices in word list
+    def find_idx(ts):
+        closest_i = 0
+        min_diff = float("inf")
+        for i, w in enumerate(word_list):
+            diff = abs(w["start"] - ts)
+            if diff < min_diff:
+                min_diff = diff
+                closest_i = i
+        return closest_i
+
+    start_idx = find_idx(start)
+    end_idx = find_idx(end)
+
+    # Strategy: Alternating expansion (Prepend Sentence -> Append Sentence)
+    # Prefer appending if we are mid-thought, prefer prepending if start is abrupt.
+    # For simplicity, we try to grab the previous sentence first (Context), then next (continuation).
+
+    # 1. Try PREPENDING previous sentence
+    if start_idx > 0:
+        # scan backwards for punctuation
+        found_prev = False
+        for i in range(start_idx - 1, max(-1, start_idx - 50), -1):
+            w = word_list[i]
+            if any(p in w["word"] for p in [".", "?", "!"]):
+                # Found end of previous-previous sentence.
+                # So the "previous" sentence starts at i+1
+                new_start_idx = i + 1
+                new_start = word_list[new_start_idx]["start"]
+                added_dur = start - new_start
+                start = new_start
+                start_idx = new_start_idx
+                duration += added_dur
+                print(f"      Use PREV sentence: +{added_dur:.1f}s")
+                found_prev = True
+                break
+
+        if not found_prev and start_idx > 0:
+            # Just grab 5 seconds back if no sentence boundary found
+            new_start = max(0, start - 5)
+            duration += start - new_start
+            start = new_start
+
+    if duration >= min_sec:
+        return start, end
+
+    # 2. Try APPENDING next sentence
+    if end_idx < len(word_list) - 1:
+        found_next = False
+        for i in range(end_idx + 1, min(len(word_list), end_idx + 50)):
+            w = word_list[i]
+            if any(p in w["word"] for p in [".", "?", "!"]):
+                new_end = w["end"]
+                added_dur = new_end - end
+                end = new_end
+                end_idx = i
+                duration += added_dur
+                print(f"      Use NEXT sentence: +{added_dur:.1f}s")
+                found_next = True
+                break
+
+        if not found_next:
+            new_end = min(word_list[-1]["end"], end + 5)
+            duration += new_end - end
+            end = new_end
+
+    return start, end
+
+
 def _build_system_prompt(content_type, min_sec, max_sec):
     """
     Builds content-type-aware system prompt for the LLM.
-    
+
     Args:
         content_type: "podcast", "solo", or "auto"
         min_sec: Minimum clip duration
@@ -104,11 +313,12 @@ def _build_system_prompt(content_type, min_sec, max_sec):
     # --- Shared rules (apply to ALL content types) ---
     shared_rules = (
         "RULES:\n"
-        f"1. STRICT DURATION CONSTRAINT: Each clip MUST be between {min_sec} and {max_sec} seconds. "
-        "   Do NOT output clips shorter or longer than this range. Verify duration before outputting.\n"
+        f"1. QUALITY OVER DURATION: Your primary goal is to find the BEST content. "
+        f"   Target approx {min_sec}-{max_sec}s, but if a viral moment is slightly shorter or longer, output it anyway. "
+        "   We will adjust the timing in post-processing.\n"
         "2. STRUCTURE: Ensure the clip has a clear HOOK (opening that grabs attention) and PAYOFF (satisfying conclusion). "
         "   Do NOT cut off mid-sentence or mid-thought.\n"
-        "3. SCENE BOUNDARIES: Prefer cutting at Scene Boundaries if available, BUT valid duration takes priority.\n"
+        "3. SCENE BOUNDARIES: Prefer cutting at Scene Boundaries if available.\n"
     )
 
     # --- Scoring criteria (shared) ---
@@ -191,21 +401,32 @@ def _build_system_prompt(content_type, min_sec, max_sec):
 
 
 def analyze_transcript(
-    transcript_text,
-    min_sec=30,  # UPDATED default: 30s
-    max_sec=60,  # UPDATED default: 60s
+    transcript_input,  # CHANGED: Can be text or word_list
+    min_sec=30,
+    max_sec=60,
     logger=None,
     video_path=None,
     progress_callback=None,
-    content_type="auto",  # NEW: "auto", "podcast", or "solo"
+    content_type="auto",
 ):
     """
     Sends transcript to Ollama.
-    Now optionally uses visual SCENE BOUNDARIES to guide the AI.
-    Supports content_type: 'auto' (detect), 'podcast', or 'solo'.
+    Supports smart sematic snapping if transcript_input is a list of words.
     """
     if not ensure_ollama_running():
         return [], []
+
+    # Handle Input Type
+    word_list = []
+    if isinstance(transcript_input, list):
+        # We got raw words!
+        word_list = transcript_input
+        # Convert to text for LLM
+        transcript_text = format_transcript_with_time(word_list)
+    else:
+        # Legacy string input
+        transcript_text = str(transcript_input)
+        word_list = []  # Can't do smart snapping without words
 
     # --- Log System Resources ---
     import psutil
@@ -277,7 +498,11 @@ def analyze_transcript(
                 logger.log(msg, "INFO")
 
             chunk_clips, _ = analyze_transcript(
-                chunk_text, min_sec, max_sec, logger, video_path=None,
+                chunk_text,  # Passing text for chunks is safer/simpler for now
+                min_sec,
+                max_sec,
+                logger,
+                video_path=None,
                 content_type=content_type,
             )
             all_clips.extend(chunk_clips)
@@ -489,36 +714,94 @@ def analyze_transcript(
             e_val = safe_float(end)
 
             if s_val is not None and e_val is not None:
-                # [STRICT] Duration Validation - Use user's min_sec AND max_sec parameter
-                duration = e_val - s_val
-                if duration < min_sec or duration > max_sec:
-                    print(
-                        f"⚠️ Skipping clip (invalid duration {duration:.1f}s not in {min_sec}-{max_sec}s): {x.get('hook', 'Unknown')}"
-                    )
-                    continue
-
-                # [SCENE-AWARE] Snap to nearest scene boundaries (if available)
                 final_s, final_e = s_val, e_val
 
-                if scenes:  # If we have cached scene data
-                    try:
-                        snapped_s, snapped_e = snap_to_scenes(
-                            s_val, e_val, scenes, max_shift=3.0
+                # --- UNIFIED SMART SNAPPING & VALIDATION ---
+                # 1. Apply Semantic Snapping FIRST (This may fix slightly short/long clips)
+                if word_list:
+                    # Snapping logic now handles the "intelligence" of finding the best cut
+                    final_s, final_e = snap_to_word_boundary(
+                        final_s, final_e, word_list, min_sec, max_sec
+                    )
+
+                    # --- CONTEXT EXPANSION (NEW) ---
+                    # If clip is too short, intelligently add surrounding sentences
+                    curr_dur = final_e - final_s
+                    if curr_dur < min_sec:
+                        final_s, final_e = expand_context(
+                            final_s, final_e, word_list, min_sec
                         )
-                        snapped_dur = snapped_e - snapped_s
+                    # -------------------------------
 
-                        # Only accept snap if it respects duration constraints
-                        if min_sec <= snapped_dur <= max_sec:
-                            final_s, final_e = snapped_s, snapped_e
-                        else:
-                            # Snap pushed it out of bounds - keep original (which we know is valid)
-                            pass
-                    except Exception:
-                        pass  # Fall back to original timestamps if snapping fails
-
-                # Double check final duration just in case
+                # 2. Check Duration (AFTER Snapping)
                 final_dur = final_e - final_s
-                if final_dur < min_sec or final_dur > max_sec:
+
+                # 3. Handle Too Long (Split Strategy)
+                if final_dur > max_sec + 5.0:
+                    print(
+                        f"⚠️ Clip too long ({final_dur:.1f}s). Splitting into parts..."
+                    )
+                    # Example: 155s -> Part 1 (0-60), Part 2 (60-120), Part 3 (120-155)
+                    # We need to be smart about overlapping or strict splitting.
+                    # Let's try strict sequential splitting for now, as that's safer.
+
+                    current_start = final_s
+                    part_num = 1
+
+                    while current_start < final_e:
+                        # Target end is start + max_sec
+                        target_end = min(current_start + max_sec, final_e)
+
+                        # If the remaining part is too short (< min_sec), we might skip or merge
+                        if (target_end - current_start) < min_sec:
+                            break
+
+                        # Snap the end to nearest sentence boundary
+                        if word_list:
+                            _, snapped_end = snap_to_word_boundary(
+                                current_start, target_end, word_list, min_sec, max_sec
+                            )
+                        else:
+                            snapped_end = target_end
+
+                        # Verify duration of this part
+                        part_dur = snapped_end - current_start
+                        if part_dur >= min_sec:
+                            # Add Part
+                            try:
+                                part_clip = {
+                                    "start": current_start,
+                                    "end": snapped_end,
+                                    "score": int(score)
+                                    if safe_float(score) is not None
+                                    else 0,
+                                    "hook": str(x.get("hook", "No Hook"))
+                                    + f" (Part {part_num})",
+                                    "reason": str(x.get("reason", "No reason provided"))
+                                    + " [Split from long segment]",
+                                    "duration_type": "series_part",
+                                }
+                                clips.append(part_clip)
+                                print(f"    ➕ Added Part {part_num}: {part_dur:.1f}s")
+                                part_num += 1
+                            except (ValueError, TypeError):
+                                pass
+
+                        # Next part starts where this one ended
+                        current_start = snapped_end
+
+                        # Safety break if no progress
+                        if current_start >= final_e or part_dur <= 0:
+                            break
+
+                    # Done splitting this long clip, continue to next
+                    continue
+
+                # 4. Final Validation (Normal Clip)
+                if final_dur < min_sec or final_dur > max_sec + 5.0:
+                    print(
+                        f"⚠️ Skipping clip (invalid duration {final_dur:.1f}s not in {min_sec}-{max_sec}s): {x.get('hook', 'Unknown')}"
+                    )
                     continue
 
                 # Force to float/int
@@ -540,81 +823,110 @@ def analyze_transcript(
         top_clips = clips[:5]
 
         # --- VISION ANALYSIS (Hybrid Scoring) ---
+        # --- VISION ANALYSIS (Hybrid Scoring) ---
         if video_path and os.path.exists(video_path):
             try:
+                # 1. UNLOAD TEXT MODEL FIRST (Critical for 8GB VRAM)
+                if logger:
+                    logger.log(
+                        f"👋 Unloading {OLLAMA_MODEL} to free VRAM for Vision...",
+                        "INFO",
+                        "GREY",
+                    )
+                unload_model(OLLAMA_MODEL)
+                time.sleep(1)  # Brief pause for VRAM cleanup
+
                 msg = f"👁️ Analyzing Visuals for Top {len(top_clips)} Clips..."
                 print(msg)
                 if logger:
                     logger.log(msg, "INFO", "PURPLE")
 
-                vision = VisionAnalyzer()
-                # We only analyze the specific time ranges of the top clips to save time/compute
-                for clip in top_clips:
-                    # Multi-Frame Analysis (Start, Mid, End)
-                    timestamps = [
-                        clip["start"] + (clip["end"] - clip["start"]) * 0.1,
-                        clip["start"] + (clip["end"] - clip["start"]) * 0.5,
-                        clip["start"] + (clip["end"] - clip["start"]) * 0.9,
-                    ]
+                # Use minicpm-v for efficiency (default)
+                VISION_MODEL = "minicpm-v"
+                vision = VisionAnalyzer(model_name=VISION_MODEL)
 
-                    frame_scores = []
+                # OPTIMIZATION: Open Video Capture ONCE
+                cap = cv2.VideoCapture(video_path)
+                if not cap.isOpened():
+                    raise Exception(f"Could not open video: {video_path}")
 
-                    for i, ts in enumerate(timestamps):
-                        # Quick frame extraction
-                        cap = cv2.VideoCapture(video_path)
-                        cap.set(cv2.CAP_PROP_POS_MSEC, ts * 1000)
-                        ret, frame = cap.read()
-                        cap.release()
+                try:
+                    # We only analyze the specific time ranges of the top clips to save time/compute
+                    for clip in top_clips:
+                        # Multi-Frame Analysis (Start, Mid, End)
+                        timestamps = [
+                            clip["start"] + (clip["end"] - clip["start"]) * 0.1,
+                            clip["start"] + (clip["end"] - clip["start"]) * 0.5,
+                            clip["start"] + (clip["end"] - clip["start"]) * 0.9,
+                        ]
 
-                        if ret:
-                            temp_frame = f"temp_frame_{i}_{ts}.jpg"
-                            cv2.imwrite(temp_frame, frame)
+                        frame_scores = []
 
-                            prompt = 'Rate this video frame for viral potential (0-100). Is it visually interesting? JSON: {"score": int}'
-                            try:
-                                response_text = vision.analyze_frame(temp_frame, prompt)
-                                # Basic cleanup
-                                clean = (
-                                    response_text.replace("```json", "")
-                                    .replace("```", "")
-                                    .strip()
+                        for i, ts in enumerate(timestamps):
+                            # Quick frame extraction (seek)
+                            cap.set(cv2.CAP_PROP_POS_MSEC, ts * 1000)
+                            ret, frame = cap.read()
+
+                            if ret:
+                                temp_frame = f"temp_frame_{i}_{ts:.2f}.jpg"
+                                cv2.imwrite(temp_frame, frame)
+
+                                prompt = 'Rate this video frame for viral potential (0-100). Is it visually interesting? JSON: {"score": int}'
+                                try:
+                                    response_text = vision.analyze_frame(
+                                        temp_frame, prompt
+                                    )
+                                    # Basic cleanup
+                                    clean = (
+                                        response_text.replace("```json", "")
+                                        .replace("```", "")
+                                        .strip()
+                                    )
+                                    if "{" in clean:
+                                        import json as j
+
+                                        v_data = j.loads(clean)
+                                        frame_scores.append(int(v_data.get("score", 0)))
+                                except Exception:
+                                    pass
+                                finally:
+                                    if os.path.exists(temp_frame):
+                                        os.remove(temp_frame)
+
+                        # Calculate Weighted Visual Score
+                        # If we have 3 scores: Start(20%), Mid(50%), End(30%)
+                        if frame_scores:
+                            if len(frame_scores) >= 3:
+                                visual_score = int(
+                                    frame_scores[0] * 0.2
+                                    + frame_scores[1] * 0.5
+                                    + frame_scores[2] * 0.3
                                 )
-                                if "{" in clean:
-                                    import json as j
-
-                                    v_data = j.loads(clean)
-                                    frame_scores.append(int(v_data.get("score", 0)))
-                            except Exception:
-                                pass
-                            finally:
-                                if os.path.exists(temp_frame):
-                                    os.remove(temp_frame)
-
-                    # Calculate Weighted Visual Score
-                    # If we have 3 scores: Start(20%), Mid(50%), End(30%)
-                    if frame_scores:
-                        if len(frame_scores) >= 3:
-                            visual_score = int(
-                                frame_scores[0] * 0.2
-                                + frame_scores[1] * 0.5
-                                + frame_scores[2] * 0.3
-                            )
+                            else:
+                                visual_score = int(
+                                    sum(frame_scores) / len(frame_scores)
+                                )
                         else:
-                            visual_score = int(sum(frame_scores) / len(frame_scores))
-                    else:
-                        visual_score = 0
+                            visual_score = 0
 
-                    # Weighted Score: 70% Text, 30% Visual
-                    old_score = clip["score"]
-                    new_score = int((old_score * 0.7) + (visual_score * 0.3))
-                    clip["score"] = new_score
-                    clip["reason"] += f" | Visual: {visual_score}/100"
+                        # Weighted Score: 70% Text, 30% Visual
+                        old_score = clip["score"]
+                        new_score = int((old_score * 0.7) + (visual_score * 0.3))
+                        clip["score"] = new_score
+                        clip["reason"] += f" | Visual: {visual_score}/100"
 
+                        if logger:
+                            logger.log(
+                                f"   Clip '{clip['hook'][:15]}...': Text={old_score}, Vis={visual_score} -> Final={new_score}",
+                                "INFO",
+                            )
+                finally:
+                    # ALWAYS release the capture
+                    cap.release()
+                    # ALWAYS unload vision model
                     if logger:
-                        logger.log(
-                            f"   Clip '{clip['hook'][:15]}...': Text={old_score}, Vis={visual_score} -> Final={new_score}",
-                            "INFO",
-                        )
+                        logger.log(f"👋 Unloading {VISION_MODEL}...", "INFO", "GREY")
+                    unload_model(VISION_MODEL)
 
             except Exception as e:
                 # Log but do not fail

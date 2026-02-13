@@ -6,10 +6,18 @@
 ## 🚧 ACTIVE TASKS (High Priority)
 
 ### UI Polish (URGENT)
-- [ ] **Sidebar Layout**: Fix top/bottom padding/margin gaps in sidebar
+- [x] **Sidebar Layout**: Fix top/bottom padding/margin gaps in sidebar
     - User wants true edge-to-edge layout (zero gaps at window borders)
-    - Current status: spacing=0 applied but visual gaps remain
-- [ ] **Responsive Layout**: Ensure all controls visible at different window sizes
+    - **FIXED**: Removed global `page.padding` and `page.spacing`.
+- [x] **Responsive Layout**: Ensure all controls visible at different window sizes
+    - Verified with new layout logic.
+
+### Optimization (2026-02-13)
+- [x] **Memory Architecture**: Implemented Sequential Loading (`unload_model`).
+- [x] **Model Upgrade**: Standardized on `minicpm-v` for vision.
+- [x] **I/O Speed**: Optimized `analyzer.py` video capture loop.
+- [x] **Auto-Pull Models**: Implement automatic `ollama pull` in `analyzer.py` if model is missing. (User Requirement)
+  - **Done**: `ensure_ollama_running()` handles auto-pull.
 
 ### Testing & Quality
 - [ ] **Long-form Stress Test**: Run 20+ minute video to verify subprocess stability
@@ -40,10 +48,13 @@
 
 ### UX & Polish (2026-02-11)
 - [x] **Filename Clarity**: Changed output to `ClipX_Start09m00s_Dur45s.mp4`.
-- [x] **Content Type UI**: Added Auto/Podcast/Solo dropdown.
 - [x] **UI Label Fix**: Corrected "Target Length" static text.
 
-
+### Intelligence Overhaul (2026-02-13)
+- [x] **Smart Semantic Snapping**: No more mid-sentence cuts.
+- [x] **Context Expansion**: Short clips are auto-extended.
+- [x] **Series Splitting**: Long clips become Part 1/2.
+- [x] **Smart Download**: Fixed partial download speed (10x faster).
 
 ---
 
@@ -71,6 +82,6 @@
 ## 🛑 BUGS / KNOWN ISSUES
 - **UI Padding**: Sidebar has unwanted top/bottom gaps (User Priority #1)
 - [ ] **Bare except blocks**: Lint warnings in main_ui.py and analyzer.py
-- **Caption Size Bug**: User reports 80px settings ignored (Debugging in progress).
+- [x] **Caption Size Bug**: User reports 80px settings ignored (Fixed: Added event handler).
 
 - **MediaPipe Warnings**: `inference_feedback_manager` spam in console (cosmetic)

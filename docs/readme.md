@@ -10,3 +10,6 @@ https://www.youtube.com/watch?v=vRxyCoquhmI
 
 Brian Cox: Why black holes could hold the secret to time and space | Full Interview
 https://www.youtube.com/watch?v=KZX_c6zfJ2w
+
+You’re 28 Minutes Away From Never Being Broke Again -> Alex Hormozi
+https://youtu.be/6BQ3whjWG3M?si=-3BCTQGO9qtqEq-8

@@ -42,9 +42,26 @@
   - **FIXED**: Tuned prompt for "Story Mode" and "Emotional Resonance".
   - **FIXED**: Suppressed harmless segfault log (Exit 3221226505).
   - **Status**: Ready for verification.
-  
 
 
-- [ ] **Caption Size Bug**: User sets 80px, but it defaults. (Debugging in progress - Logs added)
+
+- [x] **Caption Size Bug**: User sets 80px, but it defaults. (Fixed 2026-02-13)
 - [ ] **Feature Request**: B-Roll Integration. (Moved to PLAN.md)
 - [x] **UI Bug**: Target Length Label mismatch. (Fixed)
+- [x] **Feature Request**: Auto-pull new models. "Whenever we update the models, the agent should auto download/pull the new model from internet."
+  - **Implemented**: `ensure_ollama_running` does this automatically.
+- [x] **Optimization**: Check internet for better models & improve memory management.
+  - **Action**: Research confirmed `qwen2.5` + `minicpm-v` as SOTA.
+  - **Action**: Implemented `unload_model` and I/O optimizations.
+- [x] **Improve Video Accuracy**: "Model is cutting between words."
+  - **Fixed**: Implemented `snap_to_word_boundary` (Semantic Snapping).
+- [x] **Smart Duration**: "Let the AI decide... split if too long".
+  - **Fixed**: Implemented `expand_context` (for short hooks) and Series Splitting (for long stories).
+- [ ] **Feature Request**: Full In-App Editor (Manual trimming). (Long Term)
+
+
+
+
+
+next step, update the captions, better styling, better word highlight.
+B-Rolls, 

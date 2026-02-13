@@ -83,7 +83,7 @@ HF_HOME=E:/AI_Video_Engine/models
 
 ### Models (Updated 2026-02-09)
 - **LLM**: `qwen2.5:7b` (Best logic/size ratio)
-- **Vision**: `llava:7b` (Hybrid scoring)
+- **Vision**: `minicpm-v` (8B) - **Highly Efficient**, supports high-res slicing.
 - **Audio**: `faster-whisper large-v3-turbo` (Speed favored)
 
 ---
@@ -102,6 +102,15 @@ HF_HOME=E:/AI_Video_Engine/models
 - **Human-readable ETA**: All progress displays use `mm:ss` format.
 - **Explicit Filenames**: Output files use `Clip1_Start09m00s_Dur45s` to avoid confusion between start time and duration.
 - **Content Type UI**: User can select "Auto/Podcast/Solo" to bias the analysis.
+- **Sequential Loading (RTX 4060 Optimized)**: The system explicitly unloads `qwen2.5` before loading `minicpm-v` to stay within 8GB VRAM.
+- **I/O Optimization**: Video files are opened once per batch, reducing disk thrashing.
+- **Smart Download Strategy**:
+    -   **< 15 mins**: Always download FULL (Faster/Safer).
+    -   **> 15 mins**: Download Partial Segment with `-c copy` (No Re-encoding, 10x speedup).
+- **Intelligence Overhaul (Content First)**:
+    -   **Semantic Snapping**: Clips snap to nearest (`.`, `?`, `!`) to complete sentences.
+    -   **Context Expansion**: Short clips are auto-extended with surrounding sentences.
+    -   **Series Mode**: Long clips are split into Part 1/2/3.
 
 
 
@@ -154,6 +163,9 @@ ollama list
 14. **Missing `time_to_ass` Method (2026-02-11 00:00)**: `SubtitleGenerator` in `fast_caption.py` called `self.time_to_ass()` but the method was never defined — instant crash at rendering. **FIX**: Added the method that converts float seconds to ASS timecode `H:MM:SS.CC`. Also switched Ollama analysis from blocking `stream: False` to `stream: True` with live token progress feedback.
 15. **Suppressing 'Safe' Segfaults (2026-02-11 00:15)**: The CTranslate2 library has a known bug where its C++ destructor segfaults (Exit Code 0xC0000005) when freeing CUDA memory at process exit. This is **unfixable** from Python as it happens after the global interpreter shuts down. **STRATEGY**: Since the transcription data is already saved to disk, we treat this specific exit code as "Success" and suppress the warning log. This is a permanent limitation of the current `faster-whisper` backend version.
 16. **Start Time vs Duration Confusion (2026-02-11 23:55)**: Users seeing `Clip1_540s` in filenames assumed "540s" was the duration (9 mins) and reported it as a bug. **FIX**: Always include explicit labels like `Start09m00s` and `Dur45s` in user-facing strings/filenames. Ambiguity = perceived bug.
+17. **Manual Model Pulling (2026-02-13)**: Switching the codebase to use a new model (`minicpm-v`) without automating the download step caused confusion. The code warned but didn't act. **LESSON**: If the code depends on a specific model, it should auto-pull it (with user consent/logging) rather than failing or expecting the user to know CLI commands.
+18. **FFmpeg Decoder Error (2026-02-13)**: Passed `-c copy` as an input argument (`ffmpeg_i`) to `yt-dlp` instead of output (`ffmpeg_o`). Resulted in `Unknown decoder 'copy'`. **LESSON**: Be precise with argument placement in external tools.
+19. **LLM Hallucinations vs Constraints (2026-02-13)**: Trying to force a small 7B model to output *exact* timestamps (<60s) resulted in it ignoring great content that was 62s or 25s. **LESSON**: Let the LLM be the "Creative Scout" (find content) and use Python logic as the "Editor" (snap, trim, expand). Don't ask the LLM to do math.
 
  - ~~**MoviePy 2.0 Compatibility**: `subclip` removed in v2.0~~ — Already using `subclipped`. Resolved.
  

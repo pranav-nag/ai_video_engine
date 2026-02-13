@@ -104,8 +104,8 @@ def main(page: ft.Page):
     # --- 1. App Configuration ---
     page.title = "AI Video Engine PRO - Co-Pilot Edition"
     page.theme_mode = ft.ThemeMode.DARK
-    page.padding = 0  # Remove default padding to fix "weird black borders"
-    page.spacing = 0  # Remove default spacing
+    page.padding = 0  # FIX: Remove default padding
+    page.spacing = 0  # FIX: Remove default spacing
     page.window_width = 1600
     page.window_height = 1000
     page.bgcolor = "#0a0a0a"  # Deep black/grey
@@ -532,6 +532,12 @@ def main(page: ft.Page):
 
     duration_slider.on_change = on_slider_change
 
+    def on_caption_size_change(e):
+        caption_size_label.value = f"Caption Size: {int(e.control.value)}px"
+        page.update()
+
+    caption_size_slider.on_change = on_caption_size_change
+
     # --- 4. Pipeline Execution ---
     def run_ai_pipeline(
         url,
@@ -569,7 +575,12 @@ def main(page: ft.Page):
 
             ingestor = VideoIngestor()
             video_path, video_title = ingestor.download(
-                url, start_time, end_time, resolution=res, logger=video_logger
+                url,
+                start_time,
+                end_time,
+                resolution=res,
+                logger=video_logger,
+                cancel_event=cancel_event,  # CRITICAL: Pass event
             )
 
             if cancel_event.is_set():
@@ -638,7 +649,7 @@ def main(page: ft.Page):
                     update_progress(0.55, status_msg)
 
                 clips, scenes = analyze_transcript(
-                    formatted_text,
+                    words,  # CHANGED: Pass full word list logic for smart snapping
                     min_sec=min_sec,
                     max_sec=max_sec,
                     logger=video_logger,
