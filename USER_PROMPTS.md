@@ -42,6 +42,7 @@
   - **FIXED**: Tuned prompt for "Story Mode" and "Emotional Resonance".
   - **FIXED**: Suppressed harmless segfault log (Exit 3221226505).
   - **Status**: Ready for verification.
+  
 
 
 - [ ] **Caption Size Bug**: User sets 80px, but it defaults. (Debugging in progress - Logs added)
