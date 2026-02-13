@@ -48,13 +48,10 @@
 
 ### UX & Polish (2026-02-11)
 - [x] **Filename Clarity**: Changed output to `ClipX_Start09m00s_Dur45s.mp4`.
+- [x] **Content Type UI**: Added Auto/Podcast/Solo dropdown.
 - [x] **UI Label Fix**: Corrected "Target Length" static text.
 
-### Intelligence Overhaul (2026-02-13)
-- [x] **Smart Semantic Snapping**: No more mid-sentence cuts.
-- [x] **Context Expansion**: Short clips are auto-extended.
-- [x] **Series Splitting**: Long clips become Part 1/2.
-- [x] **Smart Download**: Fixed partial download speed (10x faster).
+
 
 ---
 
@@ -82,6 +79,6 @@
 ## 🛑 BUGS / KNOWN ISSUES
 - **UI Padding**: Sidebar has unwanted top/bottom gaps (User Priority #1)
 - [ ] **Bare except blocks**: Lint warnings in main_ui.py and analyzer.py
-- [x] **Caption Size Bug**: User reports 80px settings ignored (Fixed: Added event handler).
+- **Caption Size Bug**: User reports 80px settings ignored (Debugging in progress).
 
 - **MediaPipe Warnings**: `inference_feedback_manager` spam in console (cosmetic)
