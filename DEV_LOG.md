@@ -159,3 +159,29 @@
 - **User Verification**: accurate testing of the new prompt logic on a full video.
 - **Sentiment Tuning**: If clips are still generic, consider switching to `qwen2.5:14b` or `gemma:9b` (if VRAM permits).
 
+
+## Session: 2026-02-11 23:55 [Bug Squash & UI Polish]
+
+### Log
+- **FIXED**: "Target Length" label used static text "15-60s", mismatching the new default "30-60s". Fixed `main_ui.py` to match.
+- **FIXED**: Filename Confusion. Output files were named `Clip1_540s.mp4`. Users interpreted "540s" as duration (9 mins) instead of Start Time.
+  - **Action**: Changed format to `Clip1_Start09m00s_Dur45s.mp4`. Explicit and unambiguous.
+- **ADDED**: Content Type Selection in UI (Auto / Podcast / Solo).
+  - Wired `content_type` dropdown from `main_ui.py` -> `run_ai_pipeline` -> `analyzer.py`.
+- **DEBUGGING**: Caption Size Bug.
+  - User reports setting 80px but getting default size.
+  - Code review shows valid logic in `renderer.py` and `fast_caption.py`.
+  - **Action**: Added INFO logging to `renderer.py` to trace `font_size` and `style_name`.
+  - Waiting for user test to verify if renderer receives correct value.
+
+### Completed
+- UI Label Fix (Target Length)
+- Filename Clarity (Start vs Duration)
+- Content Type UI Integration
+- Caption Size Logging (Debug)
+
+### Next Steps
+- Verify Caption Size log output from user.
+- Plan B-Roll Integration (Feature Request).
+
+
