@@ -34,6 +34,12 @@ load_dotenv(os.path.join(BASE_DIR, ".env"))
 
 
 def main():
+    # Force UTF-8 for emoji support on Windows
+    if sys.stdout.encoding != "utf-8":
+        sys.stdout.reconfigure(encoding="utf-8")
+    if sys.stderr.encoding != "utf-8":
+        sys.stderr.reconfigure(encoding="utf-8")
+
     if len(sys.argv) < 3:
         print(
             "Usage: transcribe_worker.py <video_path> <output_json_path> [model_size]",

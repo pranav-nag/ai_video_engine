@@ -13,9 +13,9 @@
 - **FIXED**: Switched to `subprocess.Popen` with `bufsize=1` and line-by-line yielding in `ingest_transcribe.py`.
 - **User Issue**: App crashed with `[NO_LOGGER]` or backend SyntaxError.
 - **Root Cause 1**: Windows file locking prevented `rename_log_file` from working. Added retry/fallback in `logger.py`.
-- **Root Cause 2**: Duplicate `global OLLAMA_MODEL` declaration in `analyzer.py` caused a syntax error. Fixed.
-- **Feature**: User requested separation of App Theme (Sidebar) from Video Theme (Captions).
-- **Implemented**: Added `Interface Theme Picker` in Sidebar header and moved `Quick Themes` (Video) to a collapsible section.
+- **User Issue**: Transcription subprocess crashed on Windows with `UnicodeEncodeError`.
+- **Root Cause**: `cp1252` console encoding failed to print unicode emojis (🧠).
+- **FIXED**: Forced `sys.stdout` and `sys.stderr` to `utf-8` in `transcribe_worker.py`.
 
 ### Completed
 - Ollama Connection Resilience
