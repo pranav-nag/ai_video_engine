@@ -2,6 +2,47 @@
 
 > **Purpose**: Use this file to store temporary drafts, brainstorm ideas, log session outputs, and keep track of decisions. This prevents cluttering the main `PROJECT_MEMORY.md` with ephemeral data.
 
+## Session: 2026-02-15 [Critical Fixes & Theme Upgrade]
+
+### Log
+- **User Issue**: "Ollama is NOT running" error blocked AI analysis.
+- **Root Cause**: Strict model check for `qwen2.5:7b` failed if only other models were installed.
+- **FIXED**: `analyzer.py` now checks for *any* Qwen/Llama/Mistral model as a fallback before forcing a download.
+- **User Issue**: Frontend terminal froze during transcription.
+- **Root Cause**: `subprocess.run` buffered stdout, preventing real-time updates to the UI WebSocket.
+- **FIXED**: Switched to `subprocess.Popen` with `bufsize=1` and line-by-line yielding in `ingest_transcribe.py`.
+- **User Issue**: App crashed with `[NO_LOGGER]` or backend SyntaxError.
+- **Root Cause 1**: Windows file locking prevented `rename_log_file` from working. Added retry/fallback in `logger.py`.
+- **Root Cause 2**: Duplicate `global OLLAMA_MODEL` declaration in `analyzer.py` caused a syntax error. Fixed.
+- **Feature**: User requested separation of App Theme (Sidebar) from Video Theme (Captions).
+- **Implemented**: Added `Interface Theme Picker` in Sidebar header and moved `Quick Themes` (Video) to a collapsible section.
+
+### Completed
+- Ollama Connection Resilience
+- Terminal Real-time Sync
+- Windows File Lock Handling
+- Sidebar Theme Architecture Refactor
+
+## Session: 2026-02-15 [Parity & Cleanup]
+
+### Log
+- **WebSocket Stability**: Added 3s auto-reconnect logic in `App.tsx` and upgraded `api.py` to use `lifespan` event handlers.
+- **Workflow Optimization**: Created `run.bat` (unified build + start script) and updated root `package.json` with multi-tier build scripts.
+- **Project Structure**: Organized AI Agent documentation into the `brain/` folder for better focus.
+- **Legacy Cleanup**: Deleted obsolete `.bat` files and archived old planning documents.
+- **Content Updates**: Refactored internal naming (e.g., `FletProglog` -> `UIProglog`) to fully decouple from legacy framework references.
+
+### Completed
+- WebSocket Auto-Reconnect (Stability)
+- Unified Run/Build Command (`run.bat`)
+- Documentation Reorganization (`brain/` folder)
+- Framework Decoupling (Naming cleanup)
+
+### Next Steps
+- Perform deep E2E testing to ensure rendering parity with the original Flet app.
+
+---
+
 ## Session: 2026-02-09 [Visual & Viral Upgrade]
 
 ### Log
@@ -236,3 +277,69 @@
 - Context Expansion (Rescue short clips)
 - Series Splitting (Handle long stories)
 
+
+---
+
+## Session: 2026-02-14 [Architecture Shift: Electron Migration]
+
+### Log
+- **Decision**: User requested a "Modern App" structure, rejecting the Flet UI limits and Web Browser approach.
+- **Action**: Planning complete migration to **Electron + React + FastAPI**.
+- **Rationale**:
+    - **Electron**: Provides native window management (no browser tabs).
+    - **React**: Enables "Premium" UI components (Shadcn/Tailwind), visual caption previews, and smart color pickers.
+    - **FastAPI**: Wraps existing Python logic (`src/`) into a high-performance local API.
+- **Constraints**:
+    - **Strict VENV**: Electron must spawn `python.exe` from `.venv` only.
+    - **Performance**: Zero-lag communication via WebSockets/AsyncIO.
+    - **Memory**: Optimized process management (kill Python on exit).
+
+### Completed
+- Scaffolding (Electron/React/FastAPI)
+- Backend Implementation (api.py + WebSockets)
+- Frontend Implementation (Sidebar, Terminal, Visual Composer)
+- End-to-End "Hello World" Proof of Concept
+
+---
+
+## Session: 2026-02-14 21:30 [Polish & Packaging]
+
+### Log
+- **GOAL**: Turn the "Hello World" scaffold into a production-ready app.
+- **Frontend Polish**:
+    - Ported `Sidebar.tsx` to include all Flet features: `Resolution` (9:16, 16:9, 1:1), `Focus Mode` (Center/Auto/Left/Right), `Content Type`.
+    - Fixed syntax errors in `Sidebar.tsx` (duplicate closing tags).
+- **Backend Cleanup**:
+    - Implemented `cleanup_temp_files` in `api.py` shutdown event to prevent disk bloat.
+    - Added `try/except` blocks around cleanup to ensure graceful exit.
+- **Electron Build Config**:
+    - Configured `electron-builder` in `package.json` to package:
+        - `electron/main.js` (Main Process)
+        - `backend/` (Python Code)
+        - `frontend/dist/` (React UI)
+        - `.venv/` (Python Environment - **CRITICAL**)
+- **Path Resolution Fix**:
+    - `main.js`: detected `process.env.NODE_ENV` to switch between `../.venv` (Dev) and `process.resourcesPath/.venv` (Prod).
+  
+### Completed
+- Feature Parity (Frontend controls match Flet)
+- Graceful Shutdown (Cleanup)
+- Production Build Configuration
+- Path Resolution Logic (Dev vs Prod)
+
+### Next Steps
+- User to run `npm run dist` and test the final `.exe`.
+
+---
+
+## Session: 2026-02-14 22:00 [Size Optimization]
+
+### Log
+- **Analysis**: Project size hit 27GB. Breakdown:
+    - `cache/` (HuggingFace): **13.16 GB** -> DELETE (Redundant)
+    - `electron/dist/` (Build Artifacts): **5.89 GB** -> DELETE (Regenerate)
+    - `.venv/` (Python Env): **5.64 GB** -> KEEP (Critical)
+    - `models/` (Active Whisper): **1.51 GB** -> KEEP (Critical)
+- **Goal**: Clear ~19GB of redundant data.
+- **Action**: Deleted `cache/` and `electron/dist/` (User Approved).
+- **Result**: ~19GB Free Space Reclaimed. Project now ~7GB (mostly `.venv` + `models`).

@@ -21,13 +21,32 @@ CHUNK_SIZE = 4000
 
 def ensure_ollama_running():
     """Checks if Ollama is running and ensures model is available (auto-pulls if missing)."""
+    global OLLAMA_MODEL
     try:
-        response = requests.get(f"{OLLAMA_URL}/api/tags")
+        response = requests.get(f"{OLLAMA_URL}/api/tags", timeout=2)
         if response.status_code == 200:
             models = [m["name"] for m in response.json().get("models", [])]
-            print(f"✅ Ollama is running.")
+            print(f"✅ Ollama is running. Available models: {models}")
 
+            # Check for our preferred model
             if OLLAMA_MODEL not in models:
+                # Try to find a fallback match (e.g. any qwen, any llama3, any mistral)
+                fallback = next(
+                    (
+                        m
+                        for m in models
+                        if "qwen" in m or "llama" in m or "mistral" in m
+                    ),
+                    None,
+                )
+
+                if fallback:
+                    print(
+                        f"⚠️ Preferred model '{OLLAMA_MODEL}' not found. Using available fallback: '{fallback}'"
+                    )
+                    OLLAMA_MODEL = fallback
+                    return True
+
                 print(f"⚠️  Model '{OLLAMA_MODEL}' not found locally.")
                 print(
                     f"⬇️  Auto-pulling '{OLLAMA_MODEL}' from Ollama library (this may take a while)..."
@@ -62,10 +81,24 @@ def ensure_ollama_running():
                     print(f"\n✅ Model '{OLLAMA_MODEL}' installed successfully.")
                 except Exception as e:
                     print(f"\n❌ Failed to auto-pull model: {e}")
+                    # Final fallback: just use the first available model if any exist
+                    if models:
+                        print(f"⚠️ Using first available model: '{models[0]}'")
+                        OLLAMA_MODEL = models[0]
+                        return True
                     return False
             return True
-    except Exception:
-        print("❌ Ollama is NOT running. Please start it.")
+        else:
+            print(f"❌ Ollama returned status {response.status_code}")
+            return False
+
+    except requests.exceptions.ConnectionError:
+        print(
+            "❌ Ollama is NOT running (Connection Refused). Please start the Ollama app."
+        )
+        return False
+    except Exception as e:
+        print(f"❌ Ollama check failed: {e}")
         return False
 
 

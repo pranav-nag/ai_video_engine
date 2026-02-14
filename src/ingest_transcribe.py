@@ -91,7 +91,10 @@ class VideoIngestor:
             use_full_download = True
 
         # Configure yt-dlp based on Strategy
-        res_format = f"bestvideo[height<={resolution}][ext=mp4]+bestaudio[ext=m4a]/best[height<={resolution}][ext=mp4]/best"
+        if resolution == "source":
+            res_format = "bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best"
+        else:
+            res_format = f"bestvideo[height<={resolution}][ext=mp4]+bestaudio[ext=m4a]/best[height<={resolution}][ext=mp4]/best"
 
         ydl_opts = {
             "format": res_format,
@@ -252,40 +255,51 @@ class Transcriber:
 
         try:
             # Run subprocess — stream stdout/stderr to parent's console
-            result = subprocess.run(
+            process = subprocess.Popen(
                 cmd,
                 cwd=self.root_dir,
-                timeout=600,  # 10 minute timeout
-                # Let stdout/stderr flow to the terminal naturally
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                bufsize=1,  # Line buffered
+                encoding="utf-8",
+                errors="replace",
             )
+
+            # Stream output in real-time
+            for line in process.stdout:
+                line = line.strip()
+                if line:
+                    print(line, flush=True)
+                    # Forward interesting logs to the main logger (WebSocket)
+                    if logger:
+                        # Filter for relevant worker logs to avoid double-printing everything
+                        if any(
+                            k in line
+                            for k in ["[WORKER]", "Processing", "Transcribing", "%"]
+                        ):
+                            logger.log(line, "INFO")
+
+            # Wait for completion
+            return_code = process.wait(timeout=600)
 
             elapsed = time.time() - start_time
 
-            if result.returncode != 0:
-                # Non-zero exit could be the segfault during cleanup.
-                # Check if the JSON file was written BEFORE the crash.
+            if return_code != 0:
+                # Check for segfault codes or other errors using the same logic as before
                 if os.path.exists(output_json):
-                    # Windows Access Violation code (0xC0000005) = 3221226505
-                    # Linux Segfault = -11 (or similar negative values)
                     expected_segfault_codes = [3221226505, -1073741819, -11]
-
-                    if result.returncode in expected_segfault_codes:
-                        msg = f"✅ Transcription Subprocess finished (exit code {result.returncode} suppressed - data saved)."
+                    if return_code in expected_segfault_codes:
+                        msg = f"✅ Transcription Subprocess finished (exit code {return_code} suppressed - data saved)."
                         print(msg, flush=True)
                         if logger:
                             logger.log(msg, "INFO")
                     else:
-                        msg = (
-                            f"⚠️ Subprocess exited with unexpected code {result.returncode}. "
-                            f"Data was saved, but check logs for other errors."
-                        )
+                        msg = f"⚠️ Subprocess connection closed ({return_code}). Checking for results..."
                         print(msg, flush=True)
-                        if logger:
-                            logger.log(msg, "WARNING")
                 else:
                     raise RuntimeError(
-                        f"Transcription subprocess failed with exit code {result.returncode} "
-                        f"and no output file was produced."
+                        f"Transcription subprocess failed with exit code {return_code}"
                     )
 
         except subprocess.TimeoutExpired:

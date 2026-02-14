@@ -19,13 +19,35 @@
 - [x] **Auto-Pull Models**: Implement automatic `ollama pull` in `analyzer.py` if model is missing. (User Requirement)
   - **Done**: `ensure_ollama_running()` handles auto-pull.
 
+### Architecture Upgrade: Electron Migration (High Priority)
+- [x] **Scaffolding**: Initialize React, FastAPI, Electron projects.
+- [x] **Backend Implementation**: Create `api.py` and WebSocket manager.
+- [x] **Frontend Implementation**: Build Modern UI with Sidebar, Terminal, Visual Composer.
+- [x] **Packaging**: Verify `.venv` usage and build standalone `.exe`.
+
+### Housekeeping & Cleanup (completed)
+- [x] **Archive Legacy**: Move Flet code to `legacy/`.
+- [x] **Disk Optimization**: Clear `cache/` and `dist/` folders (Saved 19GB).
+- [x] **Standards**: Enforce Prettier and Gitignore.
+
 ### Testing & Quality
-- [ ] **Long-form Stress Test**: Run 20+ minute video to verify subprocess stability
-- [ ] **Competitor Analysis**: Side-by-side comparison with Opus.pro, Klap.app outputs
+- [ ] **End-to-End Test**: Verify full workflow in packaged app.
+- [ ] **Performance Benchmarking**: Ensure zero lag.
 
 ---
 
-## ✅ RECENTLY COMPLETED (2026-02-11)
+## ✅ RECENTLY COMPLETED (2026-02-15)
+
+### Sidebar & Theme Upgrade
+- [x] **Theme Separation**: Split "App Interface Theme" from "Video Caption Theme".
+- [x] **New Controls**: Added Interface Theme Picker (Popover) and collapsible Quick Themes.
+- [x] **Default Settings**: Updated AI Strategy to "Podcast" + "Auto Face" by default.
+
+### Critical Fixes
+- [x] **Ollama Connection**: Fixed "Ollama is NOT running" error with auto-fallback to available models.
+- [x] **Terminal Sync**: Fixed frontend terminal freezing by switching `subprocess.run` to `Popen` with real-time stdout piping.
+- [x] **Logger Stability**: Fixed `[NO_LOGGER]` crash on Windows file locks (retry logic).
+- [x] **Backend Crash**: Resolved `SyntaxError` (duplicate global) in `analyzer.py`.
 
 ### Content Quality (Refined)
 - [x] **New Prompting Strategy**: Tuned LLM to look for "Story Arcs" and "Emotional Hooks" (vs just "funny").

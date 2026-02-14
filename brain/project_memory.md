@@ -8,6 +8,11 @@
 
 ### 1. Environment & Safety
 > [!CRITICAL]
+> **ARCHITECTURE ENFORCEMENT**
+> - The project is **Electron + React + Python (FastAPI)**.
+> - **DO NOT CHANGE** this stack. No Flet, no Tkinter, no PySide.
+> - **DO NOT** modify `electron/main.js` unless absolutely necessary for window management.
+>
 > **VIRTUAL ENVIRONMENT IS MANDATORY**
 > **Current Path**: `E:\AI_Video_Engine\.venv\Scripts\python.exe`
 >
@@ -24,14 +29,30 @@
   - **DO NOT** attempt to pip install it.
   - **DO NOT** delete it. 
   - It must be running in the background for analysis to work.
-- **ImageMagick**: Located at `assets/ImageMagick/convert.exe`.
+- **Ollama**: This is a **SYSTEM APPLICATION**, not a Python package. 
+  - **DO NOT** attempt to pip install it.
+  - **DO NOT** delete it. 
+  - It must be running in the background for analysis to work.
+- **ImageMagick**: **DEPRECATED**. We now use FFmpeg with `.ass` subtitles for all rendering.
+
+### 4. Disk Space Policy
+- **`cache/`**: HuggingFace cache. Safe to delete.
+- **`electron/dist/`**: Build artifacts. Safe to delete.
+- **`models/`**: KEEP. Contains the active Whisper model.
+- **`.venv/`**: KEEP. Contains the Python environment.
 
 ### 3. Documentation Protocol
+- **Target Audience**: Future AI Agents & User.
 - **Start of Session**: Read `PROJECT_MEMORY.md` (this file) and `USER_PROMPTS.md`.
 - **Planning**: Update `PLAN.md` before writing code.
 - **Execution**: Log major decisions in `DEV_LOG.md`.
 - **End of Session**: Update this file with new learnings (Section 7).
+- **Development**:
+    - **Backend**: Run `python backend/api.py`.
+    - **Frontend**: Check `frontend/src/` for React components.
+    - **Electron**: Only touch `electron/main.js` if changing window/process logic.
 
+### 4. Disk Space Policy
 ---
 
 ## 1. Project Architecture
@@ -41,24 +62,34 @@
 ### Core Pipeline (`src/`)
 | Module | Function | Key Models/Tech |
 |:---|:---|:---|
+| **`electron/`** | **[NEW]** App Shell | Native Window Management, Process Lifecycle (Spawns Python). |
+| **`frontend/`** | **[NEW]** User Interface | React 18, TailwindCSS, Shadcn/UI. Handles all user interaction. |
+| **`backend/`** | **[NEW]** API Server | FastAPI, Uvicorn. Exposes Python logic to Frontend via WebSockets. |
 | **`ingest_transcribe.py`** | Downloads video & Generates timestamps | `yt-dlp` (Multi-thread), `faster-whisper large-v3-turbo` |
-| **`analyzer.py`** | Finds viral hooks & scene scenes | `qwen2.5:7b` (Ollama), `SceneDetector` (PySceneDetect) |
-| **`vision_analyzer.py`** | Hybrid Visual Scoring | `llava:7b` (Ollama) - Start/Mid/End frame analysis |
+| **`analyzer.py`** | Hooks & Virality | `qwen2.5:7b` (Ollama), `SceneDetector` (PySceneDetect) |
 | **`cropper.py`** | 9:16 Smart Cropping | `MediaPipe` (Face Mesh), Scene-Aware Smoothing |
-| **`fast_caption.py`** | **[NEW]** Subtitle Generation | Generates `.ass` file with Karaoke & Pop Animations |
+| **`fast_caption.py`** | Subtitle Generation | Generates `.ass` file with Karaoke & Pop Animations |
 | **`renderer.py`** | Final Video Composition | `FFmpeg` (burning .ass), `NVENC` (Hardware Accel) |
-| **`main_ui.py`** | Desktop GUI | `Flet` (Modern Dark Theme) |
 
 ### File Structure
 ```
 E:\AI_Video_Engine\
-├── src/                # Source Code
-├── output/             # Final MP4s
-├── temp/               # Interim files (cleared often)
-├── logs/               # Execution logs
-├── assets/             # Binary dependencies (ImageMagick)
-└── .env                # Config (Ollama URL, Models)
+├── electron/           # Main Process (Node.js)
+│   ├── main.js        # Window & Process Manager
+│   └── package.json   # Build Config (electron-builder)
+├── frontend/           # Renderer Process (React)
+│   ├── src/           # UI Components (Sidebar, Terminal)
+│   └── dist/          # Compiled Static Assets
+├── backend/            # Python Bridge
+│   ├── api.py         # FastAPI Entrypoint
+│   └── websocket_manager.py # Real-time Logs
+├── src/                # Core AI Logic
+├── legacy/             # Archived Flet Code (Reference Only)
+├── .venv/              # Python Virtual Environment
+├── models/             # Active AI Models (Whisper/Ollama)
+└── output/             # Final MP4s
 ```
+> **Note**: `cache/` and `electron/dist/` are safe to delete to save space. They will be regenerated as needed.
 
 ---
 
@@ -111,11 +142,12 @@ HF_HOME=E:/AI_Video_Engine/models
     -   **Semantic Snapping**: Clips snap to nearest (`.`, `?`, `!`) to complete sentences.
     -   **Context Expansion**: Short clips are auto-extended with surrounding sentences.
     -   **Series Mode**: Long clips are split into Part 1/2/3.
-
-
+    -   **Theme Architecture**: Clear separation between "App Interface" (User Preference) and "Video Output" (Creative Choice).
 
 ### ⚠️ Known Issues / "Gotchas"
-- **Ollama Connection**: If `ollama` command fails, ensure the app is running in system tray.
+- **Ollama Connection**: The system now attempts to auto-discover models (`qwen`, `llama`, `mistral`) if the preferred one is missing.
+- **Terminal Sync**: Transcription logs are streamed via `subprocess.Popen` to avoid blocking the UI.
+- **Windows File Locks**: `logger.rename_log_file` has retry logic, but antivirus behavior can sometimes still lock files. The system will fallback to the original filename safely.
 - **Unicode Support**: `.ass` files need escaped backslashes (`\\N`) for newlines.
 - **Flet Case Sensitivity**: Use `ft.colors.TRANSPARENT` (Uppercase), not lowercase.
 
@@ -123,25 +155,14 @@ HF_HOME=E:/AI_Video_Engine/models
 
 ## 5. Development Cheat Sheet
 
-### Run the App
-```powershell
-./.venv/Scripts/python src/main_ui.py
-```
+### 🔥 Fast Run (Recommended)
+1. Just double-click `run.bat` in the root directory.
+   - It will close old instances, build the frontend, package electron, and launch.
 
-### Debugging Tools
-```powershell
-# Check Models
-ollama list
-
-# Test Subtitles
-./.venv/Scripts/python test_fast_caption.py
-```
-
-### Adding Requirements
-**ALWAYS** add to requirements.txt if installing new packages.
-```powershell
-./.venv/Scripts/pip freeze > requirements.txt
-```
+### Manual Dev Mode (Granular)
+1. **Term 1 (Backend)**: `cd backend && ../.venv/Scripts/python api.py`
+2. **Term 2 (Frontend)**: `cd frontend && npm run dev`
+3. **Term 3 (Electron)**: `cd electron && npm start`
 
 ---
 
@@ -165,7 +186,8 @@ ollama list
 16. **Start Time vs Duration Confusion (2026-02-11 23:55)**: Users seeing `Clip1_540s` in filenames assumed "540s" was the duration (9 mins) and reported it as a bug. **FIX**: Always include explicit labels like `Start09m00s` and `Dur45s` in user-facing strings/filenames. Ambiguity = perceived bug.
 17. **Manual Model Pulling (2026-02-13)**: Switching the codebase to use a new model (`minicpm-v`) without automating the download step caused confusion. The code warned but didn't act. **LESSON**: If the code depends on a specific model, it should auto-pull it (with user consent/logging) rather than failing or expecting the user to know CLI commands.
 18. **FFmpeg Decoder Error (2026-02-13)**: Passed `-c copy` as an input argument (`ffmpeg_i`) to `yt-dlp` instead of output (`ffmpeg_o`). Resulted in `Unknown decoder 'copy'`. **LESSON**: Be precise with argument placement in external tools.
-19. **LLM Hallucinations vs Constraints (2026-02-13)**: Trying to force a small 7B model to output *exact* timestamps (<60s) resulted in it ignoring great content that was 62s or 25s. **LESSON**: Let the LLM be the "Creative Scout" (find content) and use Python logic as the "Editor" (snap, trim, expand). Don't ask the LLM to do math.
+20. **Electron Production Path (2026-02-14)**: In dev, `../.venv` works. In production (ASAR), resources are unpacked. **FIX**: `main.js` must check `process.env.NODE_ENV` and use `process.resourcesPath` for production builds to find the Python executable.
+21. **React State Hydration**: Missing `Resolution` and `Focus Mode` in `Sidebar.tsx` caused the backend to receive `undefined`. **LESSON**: Always audit the data contract (`VideoConfig` interface) against the backend Pydantic model (`VideoRequest`) when migrating UIs.
 
  - ~~**MoviePy 2.0 Compatibility**: `subclip` removed in v2.0~~ — Already using `subclipped`. Resolved.
  

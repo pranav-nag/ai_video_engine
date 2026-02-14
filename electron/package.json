@@ -1,0 +1,54 @@
+{
+  "name": "electron",
+  "version": "1.0.0",
+  "main": "main.js",
+  "description": "AI Video Engine Desktop App",
+  "scripts": {
+    "start": "electron .",
+    "dist": "electron-builder",
+    "pack": "electron-builder --dir",
+    "pack:fast": "electron-builder --dir -c.extraResources=null"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "devDependencies": {
+    "electron": "^28.2.0",
+    "electron-builder": "^24.9.1"
+  },
+  "build": {
+    "appId": "com.aivideoengine.app",
+    "productName": "AI Video Engine",
+    "directories": {
+      "output": "dist"
+    },
+    "files": [
+      "main.js",
+      {
+        "from": "../frontend/dist",
+        "to": "frontend/dist",
+        "filter": ["**/*"]
+      }
+    ],
+    "extraResources": [
+      {
+        "from": "../.venv",
+        "to": ".venv",
+        "filter": ["**/*"]
+      },
+      {
+        "from": "../backend",
+        "to": "backend",
+        "filter": ["**/*", "!**/__pycache__", "!**/*.pyc"]
+      },
+      {
+        "from": "../src",
+        "to": "src",
+        "filter": ["**/*"]
+      }
+    ],
+    "win": {
+      "target": "nsis"
+    }
+  }
+}

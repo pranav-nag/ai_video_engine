@@ -1,10 +1,24 @@
+# AI Video Engine - Core Dependencies
+# This file is for the Electron/FastAPI backend.
+
+# AI & Media Processing
 faster-whisper
 yt-dlp
 moviepy
 opencv-python
 mediapipe==0.10.14
-flet==0.23.2
+torch
+torchvision
+torchaudio
+
+# Backend Framework
+fastapi
+uvicorn
+python-multipart
+pydantic
 python-dotenv
+
+# Utilities
 colorama
 requests
 psutil

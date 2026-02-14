@@ -11,6 +11,14 @@
 
 ## 🔄 History (Processed)
 
+- [x] **Critical Fixes & Theme Upgrade** (2026-02-15)
+  - **Theme Separation**: Decoupled App UI theme from Video Caption theme.
+  - **App Theme Picker**: Added dedicated color selection for application UI.
+  - **Ollama Resilience**: Fixed connection errors by adding model auto-fallback logic.
+  - **Terminal Real-time Sync**: Fixed UI terminal freeze by streaming subprocess output.
+  - **Stability**: Fixed `[NO_LOGGER]` crash and backend `SyntaxError`.
+  - **Defaults**: Set "Podcast" and "Auto Face" as default AI strategy.
+
 - [x] Consolidate documentation into `USER_PROMPTS.md`, `PLAN.md`, `DEV_LOG.md`, `PROJECT_MEMORY.md`. (Completed by Restructuring Agent)
 - [x] **Output Quality Overhaul** (2026-02-10 21:05 - 22:19)
   - Fixed resolution (607×1080 → 1080×1920)
@@ -63,5 +71,42 @@
 
 
 
-next step, update the captions, better styling, better word highlight.
-B-Rolls, 
+- [x] **Visual & Audio Upgrade** (2026-02-14)
+  - **Advanced Captions**: Added "Active Word" highlight with Fill + Glow colors.
+  - **New Styles**: Added "Neon" (Cyan/Purple), "Beast", and "Gaming" presets.
+  - **Intelligent B-Roll**: Automatically fills "dead air" (no face > 2s) with random clips from `assets/b_roll`.
+  - **Background Music**: Mixes random tracks from `assets/music` at 10% volume.
+  - **Status**: Implemented & Verified (Unit Tests). Requires user assets.
+
+
+- [x] **UI Polish & Custom Styles** (2026-02-14)
+  - **Caption Preview**: Added live visual preview of caption styles.
+  - **Custom Styles**: Implemented "Custom Styling" mode with color pickers and font selection.
+  - **New Presets**: Added "Bold Shadow", "Outline Glow", "Gradient Vibrant", "Glass Morphism", "Minimal Elegant".
+  - **Bug Fix**: Fixed Caption Size slider ignoring values (100px now works).
+  - **Bug Fix**: Reserved `moviepy` import error on startup.
+  - **Status**: Implemented and Verified.
+
+- [x] **Verification: Engagement Ranking** (2026-02-14)
+  - verified logic in `analyzer.py`: Clips are scored (0-100) by AI based on hook/emotion and sorted automatically.
+  - **Status**: Confirmed working.
+
+
+
+
+
+
+
+- [ ] **Architecture Migration**: Switch to Electron + React + FastAPI. (Processing)
+  - **Reason**: User feedback "UI is complete shit", "Preview broken", "Color selection bad".
+  - **Plan**: defined in `implementation_plan.md`.
+  - **Status**: Scaffolding Phase.
+
+
+
+- [x] **Cleanup & Standardization** (2026-02-14)
+  - **Bloat Removal**: Deleted `cache/` (13GB) and `electron/dist/` (6GB).
+  - **Legacy Archive**: Moved Flet code to `legacy/`.
+  - **Model Cleanup**: Removed unused Whisper models.
+  - **Standards**: Added Prettier config and updated `.gitignore`.
+  - **Status**: Completed (Project size reduced from 27GB to ~7GB).
