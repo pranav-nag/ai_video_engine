@@ -28,58 +28,93 @@ class VideoIngestor:
         os.makedirs(self.temp_dir, exist_ok=True)
 
     def download(
-        self, url, start_time=None, end_time=None, resolution="1080", logger=None
+        self,
+        url,
+        start_time=None,
+        end_time=None,
+        resolution="1080",
+        logger=None,
+        cancel_event=None,
     ):
         """
         Downloads a video (or segment) from YouTube.
         start_time/end_time can be in seconds or "HH:MM:SS" / "MM:SS" format.
         resolution: "360", "480", "720", "1080"
+        cancel_event: optional threading.Event() to stop download
         """
         print(f"⬇️  Starting download for: {url} | Res: {resolution}p")
 
-        # Configure yt-dlp
-        # Format: best video with height <= resolution
-        res_format = f"bestvideo[height<={resolution}][ext=mp4]+bestaudio[ext=m4a]/best[height<={resolution}][ext=mp4]/best"
+        # 1. Cancellation Hook
+        def progress_hook(d):
+            if cancel_event and cancel_event.is_set():
+                raise Exception("Download Cancelled by User")
 
-        ydl_opts = {
-            "format": res_format,
-            "outtmpl": f"{self.temp_dir}/%(id)s.%(ext)s",
-            "paths": {
-                "home": self.temp_dir,
-                "temp": self.temp_dir,
-            },
-            "noplaylist": True,
-            "quiet": False,
-            "no_warnings": True,
-            # CRITICAL FIX: 'download_sections' is the correct key, but let's ensure it's not overridden
-            # and that we are using a compatible version of yt-dlp.
-            # Also, 'force_keyframes_at_cuts' helps with accuracy.
-            "force_keyframes_at_cuts": True,
-            # PERFORMANCE: Enable concurrent fragment downloads (4 threads)
-            "concurrent_fragment_downloads": 4,
-            # PERFORMANCE: Larger buffer for better disk I/O
-            "buffersize": 1024 * 1024,  # 1MB buffer
-        }
+        # 0. FETCH METADATA (Duration) for Strategy Decision
+        total_duration, _ = self.get_video_info(url)
+        use_full_download = False
 
-        # Handle Clipping (Partial Download)
         if start_time or end_time:
             s = start_time if start_time else "0"
             e = end_time if end_time else "inf"
-            msg = f"✂️  Downloading segment: {s} to {e}"
-            print(msg)
-            if logger:
-                logger.log(msg, "INFO")
 
-            # Use 'download_ranges' callback approach if sections fail,
-            # but 'download_sections' is the modern standard.
-            # We will strictly enforce the syntax.
             def timestamp_to_seconds(ts):
                 return self._parse_time(ts)
 
             start_sec = timestamp_to_seconds(s)
             end_sec = timestamp_to_seconds(e)
+            if end_sec == float("inf"):
+                end_sec = total_duration
 
-            # USE EXTERNAL DOWNLOADER (FFmpeg) - Most reliable for partials
+            wanted_duration = end_sec - start_sec
+
+            # --- SMART DOWNLOAD STRATEGY ---
+            # 1. If video is short (< 15 mins), just download FULL. It's faster/safer.
+            if total_duration < 900:  # 15 mins
+                use_full_download = True
+                print(
+                    f"⚡ Smart Download: Video is short ({total_duration}s). Using FULL download mode."
+                )
+
+            # 2. If we want > 50% of the video, download FULL.
+            elif wanted_duration > (total_duration * 0.5):
+                use_full_download = True
+                print(
+                    f"⚡ Smart Download: Segment > 50% ({wanted_duration}s). Using FULL download mode."
+                )
+            else:
+                print(
+                    f"⚡ Smart Download: Specific Segment ({wanted_duration}s). Using PARTIAL download mode."
+                )
+
+        else:
+            # No range specified = Full Download
+            use_full_download = True
+
+        # Configure yt-dlp based on Strategy
+        if resolution == "source":
+            res_format = "bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best"
+        else:
+            res_format = f"bestvideo[height<={resolution}][ext=mp4]+bestaudio[ext=m4a]/best[height<={resolution}][ext=mp4]/best"
+
+        ydl_opts = {
+            "format": res_format,
+            "outtmpl": f"{self.temp_dir}/%(id)s.%(ext)s",
+            "paths": {"home": self.temp_dir, "temp": self.temp_dir},
+            "noplaylist": True,
+            "quiet": False,
+            "no_warnings": True,
+            "concurrent_fragment_downloads": 4,
+            "buffersize": 1024 * 1024,
+            "progress_hooks": [progress_hook],
+        }
+
+        if not use_full_download:
+            # PARTIAL STRATEGY (Optimization: Disable Re-encoding)
+            msg = f"✂️  Downloading Partial Segment: {start_time} to {end_time}"
+            print(msg)
+            if logger:
+                logger.log(msg, "INFO")
+
             ydl_opts["download_sections"] = [
                 {
                     "start_time": start_sec,
@@ -88,9 +123,18 @@ class VideoIngestor:
                 }
             ]
             ydl_opts["external_downloader"] = "ffmpeg"
+            # CRITICAL OPTIMIZATION: -c copy (No Re-encoding). 10x Faster.
+            # Trade-off: Keyframe snap (might be +/- 2s loose).
             ydl_opts["external_downloader_args"] = {
-                "ffmpeg_i": ["-ss", str(start_sec), "-to", str(end_sec)]
+                "ffmpeg_i": ["-ss", str(start_sec), "-to", str(end_sec)],
+                "ffmpeg_o": ["-c:v", "copy", "-c:a", "copy"],
             }
+            # Ensure we don't force keyframes, as we want 'copy' mode
+            ydl_opts["force_keyframes_at_cuts"] = False
+        else:
+            # FULL STRATEGY
+            print("⬇️  Downloading Full Video...")
+            # Default behavior is fine
 
         try:
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
@@ -100,6 +144,9 @@ class VideoIngestor:
                 print(f"✅ Download Complete: {filename}")
                 return filename, title
         except Exception as e:
+            if cancel_event and cancel_event.is_set():
+                print(f"🛑 Download Cancelled.")
+                return None, None
             print(f"❌ Download Error: {e}")
             return None, None
 
@@ -208,40 +255,51 @@ class Transcriber:
 
         try:
             # Run subprocess — stream stdout/stderr to parent's console
-            result = subprocess.run(
+            process = subprocess.Popen(
                 cmd,
                 cwd=self.root_dir,
-                timeout=600,  # 10 minute timeout
-                # Let stdout/stderr flow to the terminal naturally
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                bufsize=1,  # Line buffered
+                encoding="utf-8",
+                errors="replace",
             )
+
+            # Stream output in real-time
+            for line in process.stdout:
+                line = line.strip()
+                if line:
+                    print(line, flush=True)
+                    # Forward interesting logs to the main logger (WebSocket)
+                    if logger:
+                        # Filter for relevant worker logs to avoid double-printing everything
+                        if any(
+                            k in line
+                            for k in ["[WORKER]", "Processing", "Transcribing", "%"]
+                        ):
+                            logger.log(line, "INFO")
+
+            # Wait for completion
+            return_code = process.wait(timeout=600)
 
             elapsed = time.time() - start_time
 
-            if result.returncode != 0:
-                # Non-zero exit could be the segfault during cleanup.
-                # Check if the JSON file was written BEFORE the crash.
+            if return_code != 0:
+                # Check for segfault codes or other errors using the same logic as before
                 if os.path.exists(output_json):
-                    # Windows Access Violation code (0xC0000005) = 3221226505
-                    # Linux Segfault = -11 (or similar negative values)
                     expected_segfault_codes = [3221226505, -1073741819, -11]
-
-                    if result.returncode in expected_segfault_codes:
-                        msg = f"✅ Transcription Subprocess finished (exit code {result.returncode} suppressed - data saved)."
+                    if return_code in expected_segfault_codes:
+                        msg = f"✅ Transcription Subprocess finished (exit code {return_code} suppressed - data saved)."
                         print(msg, flush=True)
                         if logger:
                             logger.log(msg, "INFO")
                     else:
-                        msg = (
-                            f"⚠️ Subprocess exited with unexpected code {result.returncode}. "
-                            f"Data was saved, but check logs for other errors."
-                        )
+                        msg = f"⚠️ Subprocess connection closed ({return_code}). Checking for results..."
                         print(msg, flush=True)
-                        if logger:
-                            logger.log(msg, "WARNING")
                 else:
                     raise RuntimeError(
-                        f"Transcription subprocess failed with exit code {result.returncode} "
-                        f"and no output file was produced."
+                        f"Transcription subprocess failed with exit code {return_code}"
                     )
 
         except subprocess.TimeoutExpired:

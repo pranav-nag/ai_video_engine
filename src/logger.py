@@ -86,6 +86,23 @@ class VideoLogger:
             self.info(f"🔄 Log file renamed to: {new_filename}")
         except Exception as e:
             print(f"Failed to rename log file: {e}")
+            # Fallback: Re-open the OLD file so logging can continue
+            if self.current_log_file:
+                try:
+                    self.logger = logging.getLogger(
+                        f"VideoLogger_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+                    )
+                    self.logger.setLevel(logging.INFO)
+                    fh = logging.FileHandler(self.current_log_file, encoding="utf-8")
+                    fh.setFormatter(
+                        logging.Formatter("%(asctime)s - %(levelname)s - %(message)s")
+                    )
+                    self.logger.addHandler(fh)
+                    self.error(
+                        f"Could not rename log file (locked by another process). Continuing with: {os.path.basename(self.current_log_file)}"
+                    )
+                except Exception:
+                    pass
 
     def info(self, message, color=None):
         self.log(message, "INFO", color)
@@ -145,7 +162,7 @@ class VideoLogger:
 try:
     import proglog
 
-    class FletProglog(proglog.ProgressBarLogger):
+    class UIProglog(proglog.ProgressBarLogger):
         def __init__(
             self,
             ui_callback,

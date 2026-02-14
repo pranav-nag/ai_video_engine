@@ -2,30 +2,33 @@ class SubtitleGenerator:
     STYLES = {
         "Hormozi": {
             "Fontname": "The Bold Font",
-            "PrimaryColour": "&H0000FFFF",  # Yellow
+            "PrimaryColour": "&H00FFFFFF",  # White
+            "HighlightColour": "&H0000FFFF",  # Yellow
             "OutlineColour": "&H00000000",  # Black
             "BackColour": "&H80000000",
             "BorderStyle": 1,
             "Outline": 3,
             "Shadow": 0,
-            "Alignment": 5,  # Center (or 2 for bottom)
+            "Alignment": 5,
             "MarginV": 250,
         },
         "Minimal": {
             "Fontname": "Montserrat",
             "PrimaryColour": "&H00FFFFFF",  # White
+            "HighlightColour": "&H00CCCCCC",  # Light Grey
             "OutlineColour": "&H00000000",
             "BackColour": "&H60000000",
             "BorderStyle": 1,
             "Outline": 1,
             "Shadow": 0,
-            "Alignment": 2,  # Bottom
+            "Alignment": 2,
             "MarginV": 50,
         },
         "Neon": {
             "Fontname": "Arial Black",
-            "PrimaryColour": "&H00FFFF00",  # Cyan
-            "OutlineColour": "&H00000000",
+            "PrimaryColour": "&H00FFFFFF",  # White
+            "HighlightColour": "&H00FFFF00",  # Cyan
+            "OutlineColour": "&H00FF0080",  # Purple Glow
             "BackColour": "&H00000000",
             "BorderStyle": 1,
             "Outline": 2,
@@ -35,20 +38,118 @@ class SubtitleGenerator:
         },
         "Boxed": {
             "Fontname": "Arial",
-            "PrimaryColour": "&H00FFFFFF",
-            "OutlineColour": "&H00000000",
-            "BackColour": "&H80000000",  # Semi-transparent box
-            "BorderStyle": 3,  # Box
+            "PrimaryColour": "&H00000000",  # Black Text
+            "HighlightColour": "&H000000FF",  # Red Text
+            "OutlineColour": "&H00FFFFFF",  # White Box (Outline)
+            "BackColour": "&H80FFFFFF",  # White Box Background
+            "BorderStyle": 3,  # Opaque Box
             "Outline": 0,
             "Shadow": 0,
             "Alignment": 2,
             "MarginV": 50,
         },
+        "Beast": {
+            "Fontname": "Komika Axis",
+            "PrimaryColour": "&H00FFFFFF",  # White
+            "HighlightColour": "&H000000FF",  # Red
+            "OutlineColour": "&H00000000",  # Black
+            "BackColour": "&H40000000",
+            "BorderStyle": 1,
+            "Outline": 5,
+            "Shadow": 2,
+            "Alignment": 5,
+            "MarginV": 300,
+        },
+        "Gaming": {
+            "Fontname": "Lilita One",
+            "PrimaryColour": "&H0000FF00",  # Green
+            "HighlightColour": "&H00FFFFFF",  # White
+            "OutlineColour": "&H00000000",  # Black
+            "BackColour": "&H80000000",
+            "BorderStyle": 1,
+            "Outline": 4,
+            "Shadow": 0,
+            "Alignment": 5,
+            "MarginV": 200,
+        },
+        "Bold Shadow": {
+            "Fontname": "Impact",
+            "PrimaryColour": "&H00FFFFFF",
+            "HighlightColour": "&H0000FFFF",  # Yellow
+            "OutlineColour": "&H00000000",
+            "BackColour": "&H80000000",
+            "BorderStyle": 1,
+            "Outline": 0,
+            "Shadow": 4,  # Heavy Shadow
+            "Alignment": 5,
+            "MarginV": 250,
+        },
+        "Outline Glow": {
+            "Fontname": "The Bold Font",
+            "PrimaryColour": "&H00FFFFFF",
+            "HighlightColour": "&H00FFFF00",  # Cyan Glow
+            "OutlineColour": "&H00FF00FF",  # Purple Outline
+            "BackColour": "&H80000000",
+            "BorderStyle": 1,
+            "Outline": 2,
+            "Shadow": 0,
+            "Alignment": 5,
+            "MarginV": 250,
+        },
+        "Gradient Vibrant": {
+            "Fontname": "Arial Black",
+            "PrimaryColour": "&H0000FFFF",  # Yellow (Start)
+            "HighlightColour": "&H00FF00FF",  # Magenta (Active)
+            "OutlineColour": "&H00FFFFFF",  # White Outline
+            "BackColour": "&H80000000",
+            "BorderStyle": 1,
+            "Outline": 2,
+            "Shadow": 0,
+            "Alignment": 5,
+            "MarginV": 250,
+        },
+        "Glass Morphism": {
+            "Fontname": "Roboto",
+            "PrimaryColour": "&H00FFFFFF",
+            "HighlightColour": "&H0000FFFF",
+            "OutlineColour": "&H40000000",  # Semi-transparent outline
+            "BackColour": "&H60000000",  # Semi-transparent box (Alpha 60)
+            "BorderStyle": 3,  # Box
+            "Outline": 0,
+            "Shadow": 0,
+            "Alignment": 5,
+            "MarginV": 250,
+        },
+        "Minimal Elegant": {
+            "Fontname": "Helvetica",
+            "PrimaryColour": "&H00DDDDDD",  # Light Grey
+            "HighlightColour": "&H00FFFFFF",  # White
+            "OutlineColour": "&H00000000",
+            "BackColour": "&H00000000",
+            "BorderStyle": 1,
+            "Outline": 0,
+            "Shadow": 0,
+            "Alignment": 5,
+            "MarginV": 250,
+        },
     }
 
-    def __init__(self, style_name="Hormozi", font_size=60, position="center"):
-        self.style_config = self.STYLES.get(style_name, self.STYLES["Hormozi"])
+    def __init__(
+        self,
+        style_name="Hormozi",
+        font_size=60,
+        position="center",
+        custom_config=None,  # NEW: Allow full custom override
+    ):
+        # 1. Select Base Style
+        base_style = self.STYLES.get(style_name, self.STYLES["Hormozi"])
+        self.style_config = base_style.copy()
+
         self.font_size = font_size
+
+        # 2. Apply Custom Overrides
+        if custom_config:
+            self.style_config.update(custom_config)
 
         # Override position if needed
         if position == "top":
@@ -66,6 +167,7 @@ class SubtitleGenerator:
 
     def generate_header(self):
         s = self.style_config
+        # Note: ASS Header uses PrimaryColour as the default text color
         return f"""[Script Info]
 ScriptType: v4.00+
 PlayResX: {self.play_res_x}
@@ -102,6 +204,9 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
         if not word_list:
             return events
 
+        # Extract highlight color from config (default to yellow if missing)
+        hl_color = self.style_config.get("HighlightColour", "&H0000FFFF")
+
         for i, w in enumerate(word_list):
             word_text = w["word"].upper()
             w_start = w["start"]
@@ -122,14 +227,15 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
             start_tc = self.time_to_ass(display_start)
             end_tc = self.time_to_ass(w_end)
 
-            # Pop animation: scale up 115% in 100ms, then back to 100%
-            anim_tags = (
-                r"{\fad(50,50)\t(0,100,\fscx115\fscy115)\t(100,200,\fscx100\fscy100)}"
-            )
+            # Pop animation: scale up 115% in 100ms + Color override
+            # \c&H...& sets the fill color to HighlightColour
+            # \3c&H...& sets the outline color (Glow)
+            hl_outline = self.style_config.get("OutlineColour", "&H00000000")
+
+            anim_tags = rf"{{\c{hl_color}\3c{hl_outline}\fad(50,50)\t(0,100,\fscx115\fscy115)\t(100,200,\fscx100\fscy100)}}"
 
             # NOTE: Emoji injection disabled — libass cannot render colored
-            # Unicode emoji via standard fonts. The get_emoji() method is kept
-            # for a future image-overlay implementation.
+            # Unicode emoji via standard fonts.
             final_text = f"{anim_tags}{word_text}"
 
             events.append(

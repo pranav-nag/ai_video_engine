@@ -170,6 +170,7 @@ class SmartCropper:
 
         # --- POST-PROCESSING (The "Stickiness" & "Hold" Logic) ---
         frame_mapping = {}
+        face_presence_map = {}  # New: Track face detection status
 
         # Initialize state
         current_rel_x = 0.5
@@ -184,6 +185,9 @@ class SmartCropper:
                 scene_cut_frames.add(int(t * fps))
 
         for idx, detected_rel_x in all_results:
+            # Face Detection Status
+            face_presence_map[idx] = detected_rel_x is not None
+
             target_rel_x = last_valid_rel_x  # Default to HOLD
 
             if detected_rel_x is not None:
@@ -233,7 +237,7 @@ class SmartCropper:
 
         gc.collect()
 
-        return frame_mapping, target_width, height
+        return frame_mapping, target_width, height, face_presence_map
 
 
 # --- Test Block ---

@@ -1,31 +1,50 @@
 @echo off
-SETLOCAL EnableDelayedExpansion
-TITLE AI Video Engine - DEV MODE
-COLOR 0A
+setlocal enabledelayedexpansion
+TITLE AI Video Engine - Build & Launch
 
-:: Check for virtual environment
+echo ========================================
+echo 🚀 AI Video Engine - Unified Run Script
+echo ========================================
+
+:: 1. Cleanup old processes to unlock files
+echo.
+echo 🛑 Step 1: Closing existing instances...
+taskkill /F /IM "AI Video Engine.exe" /T 2>nul
+taskkill /F /IM "python.exe" /T 2>nul
+taskkill /F /IM "electron.exe" /T 2>nul
+timeout /t 1 /nobreak >nul
+
+:: 2. Ensure virtual environment exists
 if not exist ".venv" (
-    echo ⚠️  Virtual environment not found!
-    echo 🔧 Creating virtual environment and installing requirements...
-    python -m venv .venv
-    if !ERRORLEVEL! NEQ 0 (
-        echo ❌ Failed to create virtual environment. 
-        echo    Make sure Python is installed and in your PATH.
-        pause
-        exit /b
-    )
-    echo ⬇️  Installing dependencies...
-    .venv\Scripts\python -m pip install --upgrade pip
-    .venv\Scripts\python -m pip install -r requirements.txt
-    echo ✅ Setup Complete.
+    echo.
+    echo 🔧 Virtual environment not found. Please run:
+    echo    python -m venv .venv
+    echo    .venv\Scripts\pip install -r requirements.txt
+    pause
+    exit /b 1
 )
 
-:: Run the app
-echo 🚀 Launching AI Video Engine...
-.venv\Scripts\python -m src.bootstrap
+:: 3. Build and Package (Fast Mode)
+echo.
+echo 🛠️  Step 2: Building and Packaging App...
+:: npm run build:fast already handles frontend build + electron packaging
+call npm run build:fast
 
 if %ERRORLEVEL% NEQ 0 (
     echo.
-    echo ❌ App exited with an error.
+    echo ❌ Build failed. Check the errors above.
+    pause
+    exit /b %ERRORLEVEL%
+)
+
+:: 4. Launch the built executable
+set "APP_PATH=electron\dist\win-unpacked\AI Video Engine.exe"
+echo.
+if exist "%APP_PATH%" (
+    echo 🚀 Step 3: Launching AI Video Engine...
+    echo ✨ Happy Clip Making!
+    start "" "%APP_PATH%"
+) else (
+    echo ❌ Error: Built app not found at %APP_PATH%
     pause
 )
