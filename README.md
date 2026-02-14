@@ -1,101 +1,82 @@
 # AI Video Engine 🎬
 
-A powerful, local-first AI video generation app built with **Electron**, **React**, and **FastAPI**.
-Takes a YouTube URL and uses local LLMs (Ollama) and Whisper to automatically detect, crop, and caption viral short clips.
-
-## 🏗️ Architecture
-- **Frontend**: React + Vite + TailwindCSS + Shadcn/UI
-- **Backend**: Python FastAPI (Hidden process)
-- **Engine**: Electron (App Shell)
-- **AI**: Ollama (LLaVA/Qwen), Faster-Whisper, MediaPipe
-
-## 🚀 How to Run (Development)
-
-You need **3 separate terminals** to run the app in dev mode (for hot-reloading).
-
-### Terminal 1: Backend (Python)
-```bash
-# Activate Virtual Environment
-source .venv/Scripts/activate  # Windows
-source .venv/bin/activate      # Mac/Linux
-
-# Start FastAPI Server
-python backend/api.py
-```
-> Server runs on `http://127.0.0.1:8000`
-
-### Terminal 2: Frontend (React)
-```bash
-cd frontend
-npm run dev
-```
-> UI runs on `http://localhost:5173`
-
-### Terminal 3: App Shell (Electron)
-```bash
-cd electron
-npm start
-```
-> Launches the desktop window connecting to localhost:5173
+A premium, local-first AI video generation suite. It transforms long-form YouTube content into viral, highly-edited short clips using local LLMs and hardware-accelerated rendering.
 
 ---
 
-## 🤖 AI Agent Developer Guide
+## ✨ Features
+- **Hybrid Architecture**: Native performance with **Electron**, modern UI with **React (Shadcn/UI)**, and high-performance AI processing with **FastAPI**.
+- **Local AI Intelligence**:
+  - **Ollama Integration**: Automated viral analysis using `qwen2.5:7b` (with auto-fallback to available models).
+  - **Vision Analysis**: Scene-aware analysis with `minicpm-v`.
+  - **Whisper Transcription**: Subprocess-isolated transcription (no VRAM crashes).
+- **Pro Video Engine**:
+  - **Smart Cropping**: MediaPipe-powered face tracking and scene-snap logic.
+  - **Advanced Captions**: Karaoke-style `.ass` subtitles with "Pop" animations and multi-style presets (Hormozi, Neon, Beast, etc.).
+  - **Hardware Acceleration**: NvEnc-optimized h264/h265 encoding for NVIDIA GPUs.
+- **Integrated Terminal**: Real-time log streaming directly in the UI.
 
-If you are an AI working on this project, follow these rules:
+---
 
-1.  **Do NOT try to run the full Electron app**. You cannot see the window.
-2.  **Mock the UI**: If you need to test backend logic, use `curl` or writing a small python script in `tests/`.
-3.  **Run Backend Only**:
-    ```powershell
-    # Windows
-    .venv\Scripts\python backend/api.py
-    ```
-4.  **Run Frontend Build Check**:
-    ```powershell
-    cd frontend; npm run build
-    ```
-5.  **Files to Watch**:
-6.  **CONTEXT LOADING (MANDATORY)**:
-    At the start of *every* session, you **MUST** read these 4 files to understand the project state:
-    - `PROJECT_MEMORY.md` (Architecture & Rules) -> **Source of Truth**
-    - `PLAN.md` (Active Tasks)
-    - `DEV_LOG.md` (History & Decisions)
-    - `USER_PROMPTS.md` (User Requirements)
-    
-    *Do not ask the user for context.* Read these files first.
+## 🏗️ Tech Stack
+- **Frontend**: React 18, Vite, TailwindCSS, Framer Motion, Radix UI.
+- **Backend**: Python 3.12 (FastAPI), WebSockets, Asyncio.
+- **AI Models**: Faster-Whisper (v3 Turbo), Ollama (Qwen/Llama), MediaPipe.
+- **Shell**: Electron (Window & Process Management).
 
-7.  **Architecture Enforcement**:
-    - **Strictly follow** the Electron + React + FastAPI pattern defined in `PROJECT_MEMORY.md`.
-    - Do **NOT** re-introduce Flet or other UI frameworks.
-    - Always use the `.venv` for Python operations.
+---
 
-## 📦 How to Build (Production)
+## 💻 Hardware Requirements
+**Minimum Specifications:**
+- **OS**: Windows 10/11 (64-bit)
+- **GPU**: NVIDIA RTX 3060/4060 (8GB VRAM Required for concurrent Vision/Text analysis)
+- **RAM**: 16GB+
+- **Storage**: 20GB Free Space (Models + Cache)
 
-To create a standalone `.exe` installer:
+---
 
-1. **Build Frontend**:
-   ```bash
-   cd frontend
-   npm run build
-   ```
+## 🚀 Getting Started
 
-2. **Package Electron App**:
-   ```bash
-   cd electron
-   npm run dist
-   ```
+### The Fast Way (One-Click)
+Just run the unified batch script in the root directory:
+```powershell
+./run.bat
+```
+*This will handle frontend building and launch the Electron app automatically.*
 
-3. **Locate Installer**:
-   The final executable will be in:  
-   `e:\AI_Video_Engine\electron\dist\win-unpacked\AI Video Engine.exe`
+### Manual Dev Mode
+If you need hot-reloading for development:
+1. **Backend**: `.venv\Scripts\python backend/api.py` (Port 8000)
+2. **Frontend**: `cd frontend && npm run dev` (Port 5173)
+3. **Electron**: `cd electron && npm start`
+
+---
+
+## 🤖 AI Agent Guidelines
+If you are an AI working on this codebase, you **must** follow the documentation protocol:
+
+### 1. Unified Project Brain
+All project context and logic are stored in the `brain/` folder. Read these first:
+- `brain/project_memory.md`: **Single Source of Truth** for architecture and operational rules.
+- `brain/plan.md`: Current roadmap and active tasks.
+- `brain/dev_log.md`: Chronological log of decisions and session outcomes.
+- `brain/user_prompts.md`: History of user requests and feature statuses.
+
+### 2. Operational Rules
+- **Environment**: Always use the local `.venv`.
+- **Infrastructure**: Electron + React + FastAPI. **No other frameworks.**
+- **GPU Safety**: Transcription is isolated in a subprocess to prevent memory leaks/segfaults.
+
+---
+
+## 📦 Building for Production
+1. Build the React UI: `cd frontend && npm run build`
+2. Package with Electron Builder: `cd electron && npm run dist`
+3. Output found in: `electron/dist/`
 
 ---
 
 ## 🛠️ Configuration
-
-- **.env**: Place your environment variables (like `OLLAMA_BASE_URL`) in the root.
-- **Project Structure**:
-    - `src/`: Core AI logic (shared by backend)
-    - `models/`: Weights for Whisper/Ollama
-    - `legacy/`: Archived Flet UI code
+- **.env**: Local config (e.g., `OLLAMA_BASE_URL`).
+- **assets/**: Background music and B-roll clips for creative editing.
+- **legacy/**: Archived code from the initial Flet transition.
