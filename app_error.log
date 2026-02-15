@@ -1,7 +1,0 @@
-CRITICAL ERROR: Could not import main_ui: No module named 'src'
-
-Traceback (most recent call last):
-  File "E:\AI_Video_Engine\src\bootstrap.py", line 141, in start_app
-    from src.main_ui import main
-ModuleNotFoundError: No module named 'src'
-

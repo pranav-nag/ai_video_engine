@@ -1,22 +1,13 @@
+import { useState } from "react"
 import { Button } from "@/components/ui/button"
-import { Input } from "@/components/ui/input"
-import { Badge } from "@/components/ui/badge"
 import { ScrollArea } from "@/components/ui/scroll-area"
-import { Separator } from "@/components/ui/separator"
-import { Switch } from "@/components/ui/switch"
-import { Slider } from "@/components/ui/slider"
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
-import { PlayCircle, Download, XCircle, Wand2, Palette, Sparkles, MonitorPlay, Timer, Settings2, Scissors } from "lucide-react"
-import { ColorPicker } from "@/components/ui/color-picker"
+import { PlayCircle, Palette, Sparkles, XCircle, Wand2, ArrowRight } from "lucide-react"
+import { motion, AnimatePresence } from "framer-motion"
 import { VideoConfig } from "../App"
-import { motion } from "framer-motion"
+import { TabMedia } from "./sidebar/TabMedia"
+import { TabAI } from "./sidebar/TabAI"
+import { TabStyle } from "./sidebar/TabStyle"
 
 // Helper: Hex to Tailwind HSL format
 function hexToHsl(hex: string) {
@@ -53,7 +44,10 @@ interface SidebarProps {
     isFetchingMetadata: boolean
     videoMetadata: { title: string; duration: number } | null
     progress: number
+    progressPhase: { name: string, percent: number, text: string } | null
 }
+
+type TabType = "media" | "ai" | "style";
 
 export function Sidebar({ 
     config, 
@@ -64,64 +58,58 @@ export function Sidebar({
     isProcessing,
     isFetchingMetadata,
     videoMetadata,
-    progress 
+    progress,
+    progressPhase 
 }: SidebarProps) {
 
-    const formatTime = (seconds: number) => {
-        const m = Math.floor(seconds / 60)
-        const s = Math.floor(seconds % 60)
-        return `${m}:${s < 10 ? '0' : ''}${s}`
-    }
+    const [activeTab, setActiveTab] = useState<TabType>("media");
 
-    const updateConfig = (key: keyof VideoConfig, value: any) => {
-        setConfig(prev => ({ ...prev, [key]: value }))
-    }
-
-    const updateCustomConfig = (key: string, value: any) => {
-        setConfig(prev => ({ 
-            ...prev, 
-            custom_config: { ...prev.custom_config, [key]: value } 
-        }))
-    }
+    const tabs: { id: TabType; label: string }[] = [
+        { id: "media", label: "Media" },
+        { id: "ai", label: "Intelligence" },
+        { id: "style", label: "Aesthetics" },
+    ];
 
     return (
         <motion.div 
             initial={{ x: -50, opacity: 0 }}
             animate={{ x: 0, opacity: 1 }}
-            className="w-[480px] bg-zinc-950/95 backdrop-blur-xl border-r border-white/10 flex flex-col h-full shadow-2xl z-50 fixed left-0 top-0 bottom-0"
+            className="w-[500px] bg-zinc-950/95 backdrop-blur-xl border-r border-white/10 flex flex-col h-full shadow-2xl z-50 fixed left-0 top-0 bottom-0 overflow-hidden"
         >
             {/* Header */}
-            <div className="p-6 border-b border-white/10 flex items-center justify-between bg-zinc-950/50 shrink-0">
-                <div className="flex items-center space-x-3">
-                    <div className="h-10 w-10 bg-primary/20 rounded-xl flex items-center justify-center border border-primary/20 shadow-[0_0_15px_rgba(124,58,237,0.3)]">
+            <div className="p-6 border-b border-white/10 flex items-center justify-between bg-zinc-950/50 shrink-0 relative overflow-hidden">
+                <div className="absolute inset-0 bg-gradient-to-r from-primary/5 to-transparent pointer-events-none" />
+                
+                <div className="flex items-center space-x-3 relative z-10">
+                    <div className="h-10 w-10 bg-gradient-to-br from-primary/20 to-primary/5 rounded-xl flex items-center justify-center border border-primary/20 shadow-[0_0_15px_rgba(124,58,237,0.15)]">
                         <PlayCircle className="text-primary h-6 w-6" />
                     </div>
                     <div>
                         <h1 className="font-display font-bold text-xl text-white tracking-tight">AI Engine</h1>
-                        <span className="text-[10px] uppercase tracking-widest text-zinc-500 font-medium ml-0.5">Pro Studio</span>
+                        <span className="text-[10px] uppercase tracking-widest text-primary/80 font-bold ml-0.5">Creator Suite</span>
                     </div>
                 </div>
 
                  {/* Interface Theme Picker */}
-                <div className="flex items-center">
+                <div className="flex items-center relative z-10">
                     <Popover>
                         <PopoverTrigger asChild>
-                            <Button variant="ghost" size="icon" className="h-8 w-8 text-zinc-400 hover:text-white hover:bg-white/5">
+                            <Button variant="ghost" size="icon" className="h-8 w-8 text-zinc-400 hover:text-white hover:bg-white/5 data-[state=open]:text-white">
                                 <Palette className="w-4 h-4" />
                             </Button>
                         </PopoverTrigger>
-                        <PopoverContent className="w-56 p-3 bg-zinc-950/95 backdrop-blur-xl border border-white/10" align="end">
-                            <label className="text-[10px] font-semibold text-zinc-500 uppercase mb-2 block">Interface Theme</label>
+                        <PopoverContent className="w-64 p-4 bg-zinc-950/95 backdrop-blur-3xl border border-white/10 shadow-2xl rounded-xl mr-2" align="start" sideOffset={10}>
+                            <label className="text-[10px] font-bold text-zinc-500 uppercase mb-3 block">Interface Accent</label>
                             <div className="grid grid-cols-4 gap-2">
                                 {[
                                     { name: "Violet", hex: "#7c3aed" },
-                                    { name: "Blue", hex: "#2563eb" },
-                                    { name: "Orange", hex: "#ea580c" },
-                                    { name: "Green", hex: "#16a34a" },
-                                    { name: "Pink", hex: "#db2777" },
-                                    { name: "Red", hex: "#dc2626" },
-                                    { name: "Cyan", hex: "#0891b2" },
-                                    { name: "Yellow", hex: "#ca8a04" }
+                                    { name: "Blue", hex: "#3b82f6" },
+                                    { name: "Cyan", hex: "#06b6d4" },
+                                    { name: "Emerald", hex: "#10b981" },
+                                    { name: "Amber", hex: "#f59e0b" },
+                                    { name: "Orange", hex: "#f97316" },
+                                    { name: "Rose", hex: "#f43f5e" },
+                                    { name: "Fuchsia", hex: "#d946ef" }
                                 ].map((color) => (
                                     <button
                                         key={color.name}
@@ -130,11 +118,12 @@ export function Sidebar({
                                             document.documentElement.style.setProperty('--primary', hsl);
                                             document.documentElement.style.setProperty('--ring', hsl);
                                         }}
-                                        className="h-8 w-8 rounded-full border border-white/10 hover:scale-110 transition-transform relative group"
+                                        className="h-9 w-9 rounded-lg border border-white/10 hover:border-white/30 hover:scale-105 transition-all relative group overflow-hidden"
                                         title={color.name}
                                         style={{ backgroundColor: color.hex }}
                                     >
-                                        <div className="absolute inset-0 rounded-full bg-white opacity-0 group-hover:opacity-20 transition-opacity" />
+                                        <div className="absolute inset-0 bg-gradient-to-tr from-black/20 to-transparent" />
+                                        <div className="absolute inset-0 bg-white opacity-0 group-hover:opacity-20 transition-opacity" />
                                     </button>
                                 ))}
                             </div>
@@ -143,363 +132,140 @@ export function Sidebar({
                 </div>
             </div>
 
-            <ScrollArea className="flex-1">
-                <div className="p-6 space-y-8 pb-32">
-                {/* section 1: Input */}
-                <section className="space-y-4">
-                    <div className="flex items-center space-x-2 text-zinc-400 mb-2">
-                        <Download className="w-4 h-4 text-primary" />
-                        <h3 className="text-xs font-bold uppercase tracking-widest">Source Media</h3>
-                    </div>
-                    
-                    <div className="p-1 bg-zinc-900/50 rounded-lg border border-white/5 space-y-3">
-                        <div className="flex space-x-2 p-2">
-                            <Input 
-                                placeholder="Paste YouTube URL..." 
-                                className="bg-zinc-950/50 border-white/10 focus:ring-primary text-sm h-10"
-                                value={config.url}
-                                onChange={(e) => updateConfig("url", e.target.value)}
-                                disabled={isProcessing}
-                            />
-                            <Button 
-                                className="bg-zinc-800 hover:bg-zinc-700 h-10 w-12"
-                                onClick={onFetchMetadata}
-                                disabled={!config.url || isProcessing || isFetchingMetadata}
-                            >
-                                {isFetchingMetadata ? <Wand2 className="w-4 h-4 animate-spin text-primary" /> : <Sparkles className="w-4 h-4 text-primary" />}
-                            </Button>
-                        </div>
+            {/* Navigation Tabs */}
+            <div className="px-6 pt-4 pb-2 bg-zinc-950/30">
+                <div className="flex p-1 bg-zinc-900/80 rounded-xl border border-white/5 relative">
+                    {/* Animated Background */}
+                    <motion.div 
+                        className="absolute top-1 bottom-1 rounded-lg bg-zinc-800 shadow-sm border border-white/5 z-0"
+                         layoutId="activeTab"
+                         initial={false}
+                         transition={{ type: "spring", bounce: 0.2, duration: 0.6 }}
+                         style={{ 
+                             width: `calc(33.33% - 4px)`, 
+                             left: activeTab === "media" ? "4px" : activeTab === "ai" ? "calc(33.33% + 2px)" : "calc(66.66%)"
+                         }}
+                    />
 
-                        {videoMetadata && (
-                            <motion.div 
-                                initial={{ opacity: 0, y: 10 }}
-                                animate={{ opacity: 1, y: 0 }}
-                                className="px-3 pb-3"
-                            >
-                                <div className="p-3 bg-primary/5 rounded border border-primary/10 space-y-1">
-                                    <div className="text-zinc-200 font-medium truncate text-xs flex items-center">
-                                        <MonitorPlay className="w-3 h-3 mr-2 text-primary" />
-                                        {videoMetadata.title}
-                                    </div>
-                                    <div className="text-zinc-500 text-[10px] pl-5 flex items-center">
-                                        <Timer className="w-3 h-3 mr-1" />
-                                        {formatTime(videoMetadata.duration)}
-                                    </div>
-                                </div>
-                            </motion.div>
-                        )}
-                    </div>
-                </section>
-
-                <Separator className="bg-white/5" />
-
-                {/* Section: Trimming */}
-                 <section className="space-y-4">
-                    <div className="flex items-center space-x-2 text-zinc-400 mb-2">
-                        <Scissors className="w-4 h-4 text-primary" />
-                        <h3 className="text-xs font-bold uppercase tracking-widest">Trim Source</h3>
-                    </div>
-
-                    <div className="p-4 bg-zinc-900/30 rounded-lg border border-white/5 space-y-4">
-                        {/* Time Inputs */}
-                        <div className="flex items-center justify-between gap-2">
-                            <div className="space-y-1 w-full">
-                                <label className="text-[10px] text-zinc-500 uppercase font-bold">Start</label>
-                                <Input 
-                                    className="h-8 bg-zinc-950 border-white/10 text-xs font-mono text-center"
-                                    value={formatTime(parseInt(config.start_time) || 0)}
-                                    readOnly
-                                />
-                            </div>
-                            <div className="text-zinc-600 font-mono">-</div>
-                            <div className="space-y-1 w-full">
-                                <label className="text-[10px] text-zinc-500 uppercase font-bold">End</label>
-                                <Input 
-                                    className="h-8 bg-zinc-950 border-white/10 text-xs font-mono text-center"
-                                    value={videoMetadata ? formatTime(parseInt(config.end_time) || videoMetadata.duration) : "Full"}
-                                    readOnly
-                                />
-                            </div>
-                        </div>
-
-                        {/* Slider */}
-                        <div className="pt-2 pb-1">
-                             <Slider 
-                                defaultValue={[0, videoMetadata?.duration || 100]} 
-                                min={0} 
-                                max={videoMetadata?.duration || 100} 
-                                step={1}
-                                value={[
-                                    parseInt(config.start_time) || 0, 
-                                    parseInt(config.end_time) || (videoMetadata?.duration || 100)
-                                ]}
-                                onValueChange={(val) => {
-                                    setConfig(prev => ({ 
-                                        ...prev, 
-                                        start_time: val[0].toString(), 
-                                        end_time: val[1].toString() 
-                                    }))
-                                }}
-                                disabled={!videoMetadata || isProcessing}
-                                className="py-2"
-                            />
-                        </div>
-
-                        {/* Presets */}
-                         <div className="grid grid-cols-3 gap-2">
-                            <Badge 
-                                variant="outline" 
-                                className="justify-center cursor-pointer hover:bg-white/5 hover:text-white text-zinc-500 h-7 text-[10px]"
-                                onClick={() => videoMetadata && setConfig(prev => ({ ...prev, start_time: "0", end_time: videoMetadata.duration.toString() }))}
-                            >
-                                Full
-                            </Badge>
-                             <Badge 
-                                variant="outline" 
-                                className="justify-center cursor-pointer hover:bg-white/5 hover:text-white text-zinc-500 h-7 text-[10px]"
-                                onClick={() => setConfig(prev => ({ ...prev, start_time: "0", end_time: "600" }))}
-                            >
-                                First 10m
-                            </Badge>
-                             <Badge 
-                                variant="outline" 
-                                className="justify-center cursor-pointer hover:bg-white/5 hover:text-white text-zinc-500 h-7 text-[10px]"
-                                onClick={() => videoMetadata && setConfig(prev => ({ ...prev, start_time: Math.max(0, videoMetadata.duration - 600).toString(), end_time: videoMetadata.duration.toString() }))}
-                            >
-                                Last 10m
-                            </Badge>
-                        </div>
-                    </div>
-                </section>
-
-
-                <Separator className="bg-white/5" />
-
-                {/* Section 2: Strategy */}
-                <section className="space-y-4">
-                    <div className="flex items-center space-x-2 text-zinc-400 mb-2">
-                        <Settings2 className="w-4 h-4 text-primary" />
-                        <h3 className="text-xs font-bold uppercase tracking-widest">AI Strategy</h3>
-                    </div>
-
-                    <div className="grid grid-cols-2 gap-4">
-                        {/* Focus Mode */}
-                        <div className="space-y-2">
-                            <label className="text-[10px] font-semibold text-zinc-500 uppercase">Focus</label>
-                            <Select 
-                                value={config.focus_mode} 
-                                onValueChange={(v) => updateConfig("focus_mode", v)}
-                                disabled={isProcessing}
-                            >
-                                <SelectTrigger className="bg-zinc-900/50 border-white/5 h-9">
-                                    <SelectValue />
-                                </SelectTrigger>
-                                <SelectContent className="bg-zinc-950 border-white/10">
-                                    <SelectItem value="center">Center Crop</SelectItem>
-                                    <SelectItem value="auto-face">Auto Face Detection</SelectItem>
-                                    <SelectItem value="left">Left Third</SelectItem>
-                                    <SelectItem value="right">Right Third</SelectItem>
-                                </SelectContent>
-                            </Select>
-                        </div>
-
-                         {/* Content Type */}
-                        <div className="space-y-2">
-                            <label className="text-[10px] font-semibold text-zinc-500 uppercase">Genre</label>
-                            <Select 
-                                value={config.content_type} 
-                                onValueChange={(v) => updateConfig("content_type", v)}
-                                disabled={isProcessing}
-                            >
-                                <SelectTrigger className="bg-zinc-900/50 border-white/5 h-9">
-                                    <SelectValue />
-                                </SelectTrigger>
-                                <SelectContent className="bg-zinc-950 border-white/10">
-                                    <SelectItem value="General">General</SelectItem>
-                                    <SelectItem value="Podcast">Podcast</SelectItem>
-                                    <SelectItem value="Motivational">Motivational</SelectItem>
-                                    <SelectItem value="Gaming">Gaming</SelectItem>
-                                </SelectContent>
-                            </Select>
-                        </div>
-                    </div>
-
-                    {/* Duration Slider */}
-                    <div className="space-y-3 pt-2 p-4 bg-zinc-900/30 rounded-lg border border-white/5">
-                        <div className="flex justify-between text-xs items-center">
-                            <label className="text-zinc-400 font-medium">Clip Duration</label>
-                            <Badge variant="outline" className="bg-primary/10 text-primary border-primary/20 py-0 h-5">
-                                {config.min_sec}s - {config.max_sec}s
-                            </Badge>
-                        </div>
-                        <Slider 
-                            defaultValue={[30, 60]} 
-                            min={5} 
-                            max={120} 
-                            step={5}
-                            value={[config.min_sec, config.max_sec]}
-                            onValueChange={(val) => {
-                                setConfig(prev => ({ ...prev, min_sec: val[0], max_sec: val[1] }))
-                            }}
-                            disabled={isProcessing}
-                            className="py-2"
-                        />
-                    </div>
-                </section>
-
-                <Separator className="bg-white/5" />
-
-                {/* Section 3: Aesthetics */}
-                <section className="space-y-4">
-                    <div className="flex items-center justify-between text-zinc-400 mb-2">
-                        <div className="flex items-center space-x-2">
-                            <Palette className="w-4 h-4 text-primary" />
-                            <h3 className="text-xs font-bold uppercase tracking-widest">Aesthetics</h3>
-                        </div>
-                        <div className="flex items-center space-x-2">
-                             <span className="text-[10px] text-zinc-600 font-bold uppercase">Custom</span>
-                             <Switch 
-                                checked={config.custom_style}
-                                onCheckedChange={(c) => updateConfig("custom_style", c)}
-                                disabled={isProcessing}
-                                className="scale-75 data-[state=checked]:bg-primary"
-                             />
-                        </div>
-                    </div>
-
-                    {/* Style & Res */}
-                    <div className="space-y-4">
-                        <div className="space-y-2">
-                            <label className="text-[10px] font-semibold text-zinc-500 uppercase">Caption Preset</label>
-                            <Select 
-                                value={config.style} 
-                                onValueChange={(v) => updateConfig("style", v)}
-                                disabled={config.custom_style || isProcessing}
-                            >
-                                <SelectTrigger className="bg-zinc-900/50 border-white/5 h-10">
-                                    <SelectValue />
-                                </SelectTrigger>
-                                <SelectContent className="bg-zinc-950 border-white/10">
-                                    <SelectItem value="Hormozi">Hormozi (Bold)</SelectItem>
-                                    <SelectItem value="Beast">MrBeast (Vibrant)</SelectItem>
-                                    <SelectItem value="Neon">Neon (Glow)</SelectItem>
-                                    <SelectItem value="Minimal">Minimal (Clean)</SelectItem>
-                                    <SelectItem value="Boxed">Boxed (Black)</SelectItem>
-                                </SelectContent>
-                            </Select>
-                        </div>
-
-                     {/* Quick Themes & Custom Colors - Collapsible */}
-                     {config.custom_style && (
-                        <motion.div 
-                            initial={{ height: 0, opacity: 0 }}
-                            animate={{ height: "auto", opacity: 1 }}
-                            className="p-4 bg-zinc-900/30 rounded-xl border border-white/5 space-y-4 overflow-hidden"
+                    {tabs.map((tab) => (
+                        <button
+                            key={tab.id}
+                            onClick={() => setActiveTab(tab.id)}
+                            className={`
+                                flex-1 relative z-10 py-1.5 text-[11px] font-bold uppercase tracking-wide transition-colors duration-200
+                                ${activeTab === tab.id ? "text-white" : "text-zinc-500 hover:text-zinc-300"}
+                            `}
                         >
-                             <div className="space-y-2">
-                                <label className="text-[10px] font-semibold text-zinc-500 uppercase mb-2 block">Quick Themes</label>
-                                <div className="grid grid-cols-4 gap-2">
-                                    {[
-                                        { name: "Cyber", primary: "#8b5cf6", highlight: "#06b6d4" },
-                                        { name: "Ocean", primary: "#0ea5e9", highlight: "#38bdf8" },
-                                        { name: "Sunset", primary: "#f97316", highlight: "#facc15" },
-                                        { name: "Forest", primary: "#22c55e", highlight: "#a3e635" }
-                                    ].map((theme) => (
-                                        <button
-                                            key={theme.name}
-                                            onClick={() => {
-                                                updateConfig("custom_style", true);
-                                                updateCustomConfig("primary_color", theme.primary);
-                                                updateCustomConfig("highlight_color", theme.highlight);
-                                            }}
-                                            className="group relative h-8 rounded-lg overflow-hidden border border-white/10 hover:border-white/30 transition-all"
-                                            title={theme.name}
-                                        >
-                                            <div className="absolute inset-0 flex">
-                                                <div className="w-1/2 h-full" style={{ backgroundColor: theme.primary }} />
-                                                <div className="w-1/2 h-full" style={{ backgroundColor: theme.highlight }} />
-                                            </div>
-                                        </button>
-                                    ))}
-                                </div>
-                            </div>
-                            
-                            <div className="pt-2 border-t border-white/5">
-                                <label className="text-[10px] font-semibold text-zinc-500 uppercase mb-2 block">Custom Hex</label>
-                                <div className="grid grid-cols-2 gap-3">
-                                    <ColorPicker 
-                                        color={config.custom_config.primary_color}
-                                        onChange={(c) => updateCustomConfig("primary_color", c)}
-                                        label="Primary"
-                                    />
-                                    <ColorPicker 
-                                        color={config.custom_config.highlight_color}
-                                        onChange={(c) => updateCustomConfig("highlight_color", c)}
-                                        label="Highlight"
-                                    />
-                                </div>
-                            </div>
-                        </motion.div>
-                    )}
-
-                        <div className="space-y-2">
-                            <label className="text-[10px] font-semibold text-zinc-500 uppercase">Output Format</label>
-                            <Select 
-                                value={config.resolution} 
-                                onValueChange={(v) => updateConfig("resolution", v)}
-                                disabled={isProcessing}
-                            >
-                                <SelectTrigger className="bg-zinc-900/50 border-white/5 h-10">
-                                    <SelectValue />
-                                </SelectTrigger>
-                                <SelectContent className="bg-zinc-950 border-white/10">
-                                    <SelectItem value="1080p">9:16 Vertical (Shorts)</SelectItem>
-                                    <SelectItem value="1920x1080">16:9 Landscape (YouTube)</SelectItem>
-                                    <SelectItem value="1080x1080">1:1 Square (Instagram)</SelectItem>
-                                </SelectContent>
-                            </Select>
-                        </div>
-                    </div>
-
-
-                </section>
+                            {tab.label}
+                        </button>
+                    ))}
                 </div>
-            </ScrollArea>
+            </div>
+
+            {/* Tab Content Area - No Global Scroll, delegate to tabs */}
+            <div className="flex-1 overflow-hidden bg-zinc-950/20 relative">
+                 <AnimatePresence mode="wait">
+                    <motion.div
+                        key={activeTab}
+                        initial={{ opacity: 0, x: 10 }}
+                        animate={{ opacity: 1, x: 0 }}
+                        exit={{ opacity: 0, x: -10 }}
+                        transition={{ duration: 0.2 }}
+                        className="h-full"
+                    >
+                        {activeTab === "media" && (
+                            <TabMedia 
+                                config={config} 
+                                setConfig={setConfig} 
+                                onFetchMetadata={onFetchMetadata}
+                                isFetchingMetadata={isFetchingMetadata}
+                                isProcessing={isProcessing}
+                                videoMetadata={videoMetadata}
+                            />
+                        )}
+                        {activeTab === "ai" && (
+                            <TabAI 
+                                config={config} 
+                                setConfig={setConfig} 
+                                isProcessing={isProcessing}
+                            />
+                        )}
+                        {activeTab === "style" && (
+                            <TabStyle 
+                                config={config} 
+                                setConfig={setConfig} 
+                                isProcessing={isProcessing}
+                            />
+                        )}
+                    </motion.div>
+                </AnimatePresence>
+            </div>
 
             {/* Footer Actions */}
             <div className="p-6 border-t border-white/10 bg-zinc-950/80 backdrop-blur-xl shrink-0 z-10 relative">
                 {isProcessing ? (
-                    <div className="space-y-3">
+                    <div className="space-y-4">
                         <div className="flex justify-between text-xs text-zinc-400 font-medium">
-                            <span className="animate-pulse text-primary flex items-center"><Wand2 className="w-3 h-3 mr-1 animate-spin" /> Processing...</span>
-                            <span className="font-mono">{Math.round(progress)}%</span>
+                            <span className="animate-pulse text-primary flex items-center font-bold tracking-wide">
+                                <Wand2 className="w-3.5 h-3.5 mr-2 animate-spin" /> 
+                                PROCESSING
+                            </span>
+                            <span className="font-mono text-white">{Math.round(progress)}%</span>
                         </div>
-                        <div className="h-1.5 bg-zinc-800 rounded-full overflow-hidden">
+                        <div className="h-2 bg-zinc-900 rounded-full overflow-hidden border border-white/5">
                             <motion.div 
-                                className="h-full bg-gradient-to-r from-violet-600 to-indigo-500" 
+                                className="h-full bg-gradient-to-r from-primary to-purple-400" 
                                 initial={{ width: 0 }}
                                 animate={{ width: `${progress}%` }}
                                 transition={{ ease: "easeOut" }}
                             />
                         </div>
+                        
+                        {/* Phase Progress (Sub-bar) */}
+                        {progressPhase && (
+                             <div className="space-y-1 mt-2">
+                                <div className="flex justify-between text-[10px] text-zinc-500 font-mono uppercase tracking-wider">
+                                    <span>{progressPhase.text}</span>
+                                    <span>{Math.round(progressPhase.percent)}%</span>
+                                </div>
+                                <div className="h-1 bg-zinc-900 rounded-full overflow-hidden border border-white/5">
+                                    <motion.div 
+                                        className="h-full bg-zinc-500" 
+                                        initial={{ width: 0 }}
+                                        animate={{ width: `${progressPhase.percent}%` }}
+                                        transition={{ ease: "linear" }}
+                                    />
+                                </div>
+                             </div>
+                        )}
                         <Button 
                             variant="destructive" 
-                            className="w-full h-9 text-xs" 
+                            className="w-full h-10 text-xs font-bold tracking-wider" 
                             onClick={onCancel}
                         >
-                            <XCircle className="h-3 w-3 mr-2" /> Cancel Operation
+                            <XCircle className="h-3.5 w-3.5 mr-2" /> CANCEL OPERATION
                         </Button>
                     </div>
                 ) : (
-                    <Button 
-                        variant="cyber"
-                        size="xl"
-                        className="w-full shadow-[0_0_30px_rgba(124,58,237,0.3)] hover:shadow-[0_0_40px_rgba(124,58,237,0.5)] border-primary/50"
-                        onClick={onProcess}
-                        disabled={!config.url}
-                    >
-                        <Sparkles className="h-5 w-5 mr-3 animate-pulse" /> GENERATE CLIPS
-                    </Button>
+                    <div className="space-y-3">
+                         {/* Navigation Hint if not on last tab */}
+                        {activeTab !== "style" && !config.url && (
+                            <div className="text-center">
+                                <span className="text-[10px] text-zinc-500 animate-pulse">Paste a URL to get started</span>
+                            </div>
+                        )}
+
+                        <Button 
+                            variant="cyber"
+                            size="xl"
+                            className="w-full h-12 text-sm shadow-[0_0_30px_rgba(124,58,237,0.25)] hover:shadow-[0_0_50px_rgba(124,58,237,0.4)] border-primary/50 bg-gradient-to-r from-primary to-purple-600 hover:from-primary/90 hover:to-purple-600/90 transition-all duration-300"
+                            onClick={onProcess}
+                            disabled={!config.url}
+                        >
+                            <Sparkles className="h-5 w-5 mr-3 animate-pulse text-white" /> 
+                            <span className="font-bold tracking-widest text-white">GENERATE CLIPS</span>
+                        </Button>
+                    </div>
                 )}
             </div>
         </motion.div>

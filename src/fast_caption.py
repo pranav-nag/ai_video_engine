@@ -2,8 +2,8 @@ class SubtitleGenerator:
     STYLES = {
         "Hormozi": {
             "Fontname": "The Bold Font",
-            "PrimaryColour": "&H00FFFFFF",  # White
-            "HighlightColour": "&H0000FFFF",  # Yellow
+            "PrimaryColour": "&H0000FFFF",  # Yellow (Default Text)
+            "HighlightColour": "&H0000FFFF",  # Unused by default logic now, but kept for ref
             "OutlineColour": "&H00000000",  # Black
             "BackColour": "&H80000000",
             "BorderStyle": 1,
@@ -26,7 +26,7 @@ class SubtitleGenerator:
         },
         "Neon": {
             "Fontname": "Arial Black",
-            "PrimaryColour": "&H00FFFFFF",  # White
+            "PrimaryColour": "&H00FFFF00",  # Cyan (Default Text)
             "HighlightColour": "&H00FFFF00",  # Cyan
             "OutlineColour": "&H00FF0080",  # Purple Glow
             "BackColour": "&H00000000",
@@ -148,19 +148,30 @@ class SubtitleGenerator:
         self.font_size = font_size
 
         # 2. Apply Custom Overrides
-        if custom_config:
-            self.style_config.update(custom_config)
-
-        # Override position if needed
+        # Override position if needed (Default Logic)
         if position == "top":
-            self.style_config = self.style_config.copy()
             self.style_config["Alignment"] = 8
             self.style_config["MarginV"] = 50
         elif position == "bottom":
-            self.style_config = self.style_config.copy()
             self.style_config["Alignment"] = 2
             self.style_config["MarginV"] = 50
-        # If center, use default from style or 5
+
+        # 2. Apply Custom Overrides (Highest Priority)
+        # Normalize keys (e.g. margin_v -> MarginV)
+        if custom_config:
+            normalized_config = {}
+            for k, v in custom_config.items():
+                if k.lower() == "margin_v":
+                    normalized_config["MarginV"] = v
+                elif k.lower() == "margin_h":
+                    normalized_config["MarginL"] = v
+                    normalized_config["MarginR"] = v
+                elif k == "font":
+                    normalized_config["Fontname"] = v
+                else:
+                    normalized_config[k] = v
+
+            self.style_config.update(normalized_config)
 
         self.play_res_x = 1080
         self.play_res_y = 1920
@@ -204,8 +215,15 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
         if not word_list:
             return events
 
-        # Extract highlight color from config (default to yellow if missing)
-        hl_color = self.style_config.get("HighlightColour", "&H0000FFFF")
+        if not word_list:
+            return events
+
+        # Use PrimaryColour (Fill) as the base text color
+        # This fixes the issue where "Fill Color" was ignored and "Pop Color" was used for everything
+        main_color = self.style_config.get("PrimaryColour", "&H00FFFFFF")
+
+        # HighlightColour is optional (could be used for random emphasis if we added logic)
+        # But for now, we rely on caption_enhancer for semantic colors
 
         for i, w in enumerate(word_list):
             word_text = w["word"].upper()
@@ -213,30 +231,37 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
 
             # --- GAP-FREE TIMING ---
             # Each word stays on screen until the next word starts.
-            # This eliminates blank frames between words.
             if i + 1 < len(word_list):
                 w_end = word_list[i + 1]["start"]
             else:
-                # Last word: use its own end + 200ms buffer
                 w_end = w["end"] + 0.2
 
-            # Pre-display buffer: show word 50ms early so it's already
-            # visible the instant the speaker begins
             display_start = max(0, w_start - 0.05)
-
             start_tc = self.time_to_ass(display_start)
             end_tc = self.time_to_ass(w_end)
 
-            # Pop animation: scale up 115% in 100ms + Color override
-            # \c&H...& sets the fill color to HighlightColour
-            # \3c&H...& sets the outline color (Glow)
+            # Use PrimaryColour for the base text
             hl_outline = self.style_config.get("OutlineColour", "&H00000000")
 
-            anim_tags = rf"{{\c{hl_color}\3c{hl_outline}\fad(50,50)\t(0,100,\fscx115\fscy115)\t(100,200,\fscx100\fscy100)}}"
+            anim_tags = rf"{{\c{main_color}\3c{hl_outline}\fad(50,50)\t(0,100,\fscx115\fscy115)\t(100,200,\fscx100\fscy100)}}"
 
-            # NOTE: Emoji injection disabled — libass cannot render colored
-            # Unicode emoji via standard fonts.
-            final_text = f"{anim_tags}{word_text}"
+            # --- VISUAL ENHANCEMENT: POWER WORDS & EMOJIS ---
+            final_word_text = word_text
+
+            # 1. Power Word Color Override
+            if w.get("color"):
+                # Override the fill color (\c) with the sentiment color
+                # We place this AFTER anim_tags so it takes precedence
+                anim_tags += rf"{{\c{w['color']}}}"
+
+            # 2. Emoji Injection (with Font Override)
+            if w.get("emoji"):
+                # Use Segoe UI Emoji for Windows color support (best effort)
+                # Note: ASS has limited multi-color font support, but this ensures glyph availability
+                emoji_tag = r"{\fnSegoe UI Emoji}"
+                final_word_text += f"{emoji_tag} {w['emoji']}"
+
+            final_text = f"{anim_tags}{final_word_text}"
 
             events.append(
                 f"Dialogue: 0,{start_tc},{end_tc},Default,,0,0,0,,{final_text}"
@@ -244,53 +269,7 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
 
         return events
 
-    def get_emoji(self, word):
-        EMOJI_MAPPING = {
-            "MONEY": "💰",
-            "CASH": "💵",
-            "DOLLAR": "💲",
-            "RICH": "🤑",
-            "FIRE": "🔥",
-            "HOT": "🥵",
-            "BURN": "🎇",
-            "HAPPY": "😊",
-            "LAUGH": "😂",
-            "FUNNY": "🤣",
-            "SMILE": "😁",
-            "SAD": "😢",
-            "CRY": "😭",
-            "LOVE": "❤️",
-            "HEART": "💖",
-            "LIKE": "👍",
-            "ANGRY": "😡",
-            "MAD": "🤬",
-            "SCARY": "😱",
-            "FEAR": "😨",
-            "SHOCK": "😱",
-            "OMG": "🙀",
-            "WOW": "🤯",
-            "STOP": "🛑",
-            "WAIT": "✋",
-            "TIME": "⏰",
-            "CLOCK": "🕰️",
-            "GOAL": "🎯",
-            "KICK": "🦶",
-            "WIN": "🏆",
-            "VICTORY": "✌️",
-            "BRAIN": "🧠",
-            "THINK": "🤔",
-            "IDEA": "💡",
-            "DEAL": "🤝",
-            "WORLD": "🌎",
-            "KING": "👑",
-            "QUEEN": "👸",
-            "STAR": "⭐",
-            "ROCKET": "🚀",
-            "SKULL": "💀",
-            "DEAD": "⚰️",
-        }
-        clean = word.strip(",.!?").upper()
-        return EMOJI_MAPPING.get(clean)
+    # get_emoji REMOVED - handled by caption_enhancer.py now
 
     def generate_ass_file(self, words, output_path):
         header = self.generate_header()

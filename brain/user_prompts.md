@@ -1,112 +1,73 @@
-# User Prompts & Feature Requests
+# AI Video Engine: User Prompt History & Vision Evolution
 
-> **Instructions for the User**:
-> Add your new feature requests, bug reports, or ideas below.
-> When an AI Agent starts working, it will read the top-most item, move it to `PLAN.md` as an active task, and mark it here as `[Processing]`.
+Documenting the evolution of user expectations from a "Hardware Hack" to a "World-Class Creator Suit."
 
-## 📥 Inbox (Add new requests here)
+## 🧭 Milestone 1: The Hardware-Aware AI (Genesis)
+- **Prompt**: "Glue it piece by piece... for my specific hardware (RTX 4060)."
+- **Constraint**: The Lenovo LOQ hardware (8GB VRAM) was the ultimate governor for the "Sequential Loading" pattern.
+- **Outcome**: The first modular `src/` core.
 
-- [ ] Example: "Add a button to clear the project library."
+## 🎨 Milestone 2: Visual Professionalism (The Captions Era)
+- **Prompt**: "I want 5 stunning Alex Hormozi presets... world-class look."
+- **Evolution**: Built the `.ass` karaoke engine. High-contrast colors, yellow highlights, and "Pop" animations became the standard.
+- **Key Discovery**: Users value "Visual Energy" as much as accurate clipping.
 
+## 🚀 Milestone 3: The UX Revolution (The Electron Pivot)
+- **Prompt**: "The Flet UI is complete shit. Make it professional like Opus.pro."
+- **Transformational Requirements**:
+    - **Sticky Preview**: User wanted to see changes in real-time while tweaking font size at the bottom of the sidebar.
+    - **Global Colors**: Request to change Box/Outline colors for *any* preset, including Hormozi, without turning on "Custom Mode."
+    - **Integrated Terminal**: Real-time feedback in the app instead of a background console.
 
-## 🔄 History (Processed)
+## 🛡️ Milestone 4: Content Integrity (The "Vibe" Era)
+- **Prompt**: "The AI is cutting mid-sentence. It ruins the vibe."
+- **Technical Response**: **Semantic Snapping**. Prioritized thought-completion over strict scene boundaries.
+- **Expansion**: "Short clips are being ignored." -> Implemented **Context Expansion** to rescue high-viral-score hooks.
 
-- [x] **Critical Fixes & Theme Upgrade** (2026-02-15)
-  - **Theme Separation**: Decoupled App UI theme from Video Caption theme.
-  - **App Theme Picker**: Added dedicated color selection for application UI.
-  - **Ollama Resilience**: Fixed connection errors by adding model auto-fallback logic.
-  - **Terminal Real-time Sync**: Fixed UI terminal freeze by streaming subprocess output.
-  - **Stability**: Fixed `[NO_LOGGER]` crash and backend `SyntaxError`.
-  - **Defaults**: Set "Podcast" and "Auto Face" as default AI strategy.
+## 🧱 Milestone 5: The Stability Foundation (Ollama & VRAM)
+- **Prompt**: "The core app is broken. Ollama connection refused. Memory errors."
+- **Root Cause**: Aggressive timeouts (2s) and VRAM leaks when running multiple AI models sequentially.
+- **Solution**:
+    - **Robustness**: Retry logic + exponential backoff for AI connections.
+    - **Resource Management**: Explicit `unload_model()` + GC hooks between pipeline stages.
+    - **Sync**: Pre-flight checks to prevent "Zombie" frontend requests.
 
-- [x] Consolidate documentation into `USER_PROMPTS.md`, `PLAN.md`, `DEV_LOG.md`, `PROJECT_MEMORY.md`. (Completed by Restructuring Agent)
-- [x] **Output Quality Overhaul** (2026-02-10 21:05 - 22:19)
-  - Fixed resolution (607×1080 → 1080×1920)
-  - Fixed video bitrate (820kbps → 26 Mbps VBR, Premiere Pro match)
-  - Fixed audio bitrate (127kbps → 320kbps AAC)
-  - Fixed pixel format (gbrp → yuv420p, profile high 4.2)
-  - Fixed face cropping (static average → per-frame dynamic tracking)
-  - Fixed caption timing (gaps → gap-free, 50ms pre-buffer)
-  - Removed broken emoji rendering from ASS subtitles
-  - Added timestamps to output filenames for easy recognition
-  - **Status**: Ready for testing. Re-render a clip to verify.
-- [x] **Professional Overhaul** (2026-02-10 22:30 - 23:15)
-  - Fixed FPS preservation (removed forced 30fps, now respects source)
-  - Implemented professional caption styles (Hormozi, Minimal, Neon, Boxed)
-  - Added caption positioning controls (Top, Center, Bottom)
-  - Added real progress bar with ETA display
-  - Fixed Input/Slider synchronization (bi-directional)
-  - Added Caption Size live label (shows px value)
-  - Fixed AI duration validation (strict min/max enforcement)
-  - Improved scene snapping logic (prioritizes valid duration)
-  - Added VRAM cleanup error handling (prevents crashes)
-  - Removed duplicate dropdown in Co-Pilot Styles
-  - Set page padding=0 for edge-to-edge layout
-  - **Status**: PARTIAL - UI padding issue remains unresolved
+## 🎨 Milestone 6: The Modern Interaction Layer (UX Polish)
+- **Prompt**: "The sidebar is cluttered. Live Preview overlaps the scrollbar. Make it 2026 stunning."
+- **Feedback**: "Show download progress in the UI terminal... I want to see what's happening."
+- **Execution**:
+    - **Sidebar Refactor**: Split into `TabMedia`, `TabAI`, `TabStyle` with independent scrolling.
+    - **Visual Hierarchy**: Fixed headers for "Live Preview" so it never scrolls out of view.
+    - **Real-Time Feedback**: Piped `yt-dlp` and `Whisper` logs directly to the frontend WebSocket terminal.
 
-- [x] **Content Quality & Log Fixes** (2026-02-11 00:30)
-  - User feedback: "Clips too short (28s), sentiment generic, log errors."
-  - **FIXED**: Increased min duration to 30s.
-  - **FIXED**: Tuned prompt for "Story Mode" and "Emotional Resonance".
-  - **FIXED**: Suppressed harmless segfault log (Exit 3221226505).
-  - **Status**: Ready for verification.
+## 🎛️ Milestone 10: Control & Customization (The Editor Era)
+- **Prompt**: "Caption positioning is good... but let the user decide in an editor?"
+- **Prompt**: "Let there be an option to turn on B-Roll, and multi speaker on/off."
+- **Execution**:
+    - **Interactive Editor**: Created a "Drag-and-Drop" visual editor (`CaptionEditorModal`) for precise caption placement.
+    - **Global Toggles**: Added "Smart B-Roll" and "Video Podcast" switches in the Sidebar to give users granular control over the AI pipeline.
+    - **Live Preview**: Added video player to the editor for immediate feedback.
 
+## 📈 Priority Roadmap (User-Prioritized)
+| Feature | Progress | Status |
+| :--- | :--- | :--- |
+| **RTX 4060 Stability** | 100% | Sequential loading + Subprocess Worker. |
+| **Ollama Robustness** | 100% | Retry logic + Pre-flight Checks (Milestone 5). |
+| **Memory Management** | 100% | Explicit VRAM unloading + GC hooks. |
+| **UX/UI Modernization** | 100% | Sidebar Tabs + Non-overlapping Layouts. |
+| **B-Roll Integration** | 100% | Pexels API + Keyword Matching (Phase 9). |
+| **Interactive Editor** | 100% | Visual Caption Positioning (Phase 10). |
+| **Performance (Render)** | 100% | Process Priority Optimization (Milestone 11). |
+| **Global Error Handling**| 0% | Future Work (Phase 12). |
 
-
-- [x] **Caption Size Bug**: User sets 80px, but it defaults. (Fixed 2026-02-13)
-- [ ] **Feature Request**: B-Roll Integration. (Moved to PLAN.md)
-- [x] **UI Bug**: Target Length Label mismatch. (Fixed)
-- [x] **Feature Request**: Auto-pull new models. "Whenever we update the models, the agent should auto download/pull the new model from internet."
-  - **Implemented**: `ensure_ollama_running` does this automatically.
-- [x] **Optimization**: Check internet for better models & improve memory management.
-  - **Action**: Research confirmed `qwen2.5` + `minicpm-v` as SOTA.
-  - **Action**: Implemented `unload_model` and I/O optimizations.
-- [x] **Improve Video Accuracy**: "Model is cutting between words."
-  - **Fixed**: Implemented `snap_to_word_boundary` (Semantic Snapping).
-- [x] **Smart Duration**: "Let the AI decide... split if too long".
-  - **Fixed**: Implemented `expand_context` (for short hooks) and Series Splitting (for long stories).
-- [ ] **Feature Request**: Full In-App Editor (Manual trimming). (Long Term)
+## 📝 Pending Requests & Observations
+- "The app becomes very laggy while rendering... everything becomes slow." (Optimize Render Priority?)
+- "Generated clips lack the virality score." (UI Integration needed).
+- "Progress bar... needs to be more detailed, with ETA for each task."
 
 
+-------------------------------------------------
 
+Can you remove font family from main and move it to the custom tab?
 
-
-- [x] **Visual & Audio Upgrade** (2026-02-14)
-  - **Advanced Captions**: Added "Active Word" highlight with Fill + Glow colors.
-  - **New Styles**: Added "Neon" (Cyan/Purple), "Beast", and "Gaming" presets.
-  - **Intelligent B-Roll**: Automatically fills "dead air" (no face > 2s) with random clips from `assets/b_roll`.
-  - **Background Music**: Mixes random tracks from `assets/music` at 10% volume.
-  - **Status**: Implemented & Verified (Unit Tests). Requires user assets.
-
-
-- [x] **UI Polish & Custom Styles** (2026-02-14)
-  - **Caption Preview**: Added live visual preview of caption styles.
-  - **Custom Styles**: Implemented "Custom Styling" mode with color pickers and font selection.
-  - **New Presets**: Added "Bold Shadow", "Outline Glow", "Gradient Vibrant", "Glass Morphism", "Minimal Elegant".
-  - **Bug Fix**: Fixed Caption Size slider ignoring values (100px now works).
-  - **Bug Fix**: Reserved `moviepy` import error on startup.
-  - **Status**: Implemented and Verified.
-
-- [x] **Verification: Engagement Ranking** (2026-02-14)
-  - verified logic in `analyzer.py`: Clips are scored (0-100) by AI based on hook/emotion and sorted automatically.
-  - **Status**: Confirmed working.
-
-
-
-
-
-
-
-- [ ] **Architecture Migration**: Switch to Electron + React + FastAPI. (Processing)
-  - **Reason**: User feedback "UI is complete shit", "Preview broken", "Color selection bad".
-  - **Plan**: defined in `implementation_plan.md`.
-  - **Status**: Scaffolding Phase.
-
-
-
-- [x] **Cleanup & Standardization** (2026-02-14)
-  - **Bloat Removal**: Deleted `cache/` (13GB) and `electron/dist/` (6GB).
-  - **Legacy Archive**: Moved Flet code to `legacy/`.
-  - **Model Cleanup**: Removed unused Whisper models.
-  - **Standards**: Added Prettier config and updated `.gitignore`.
-  - **Status**: Completed (Project size reduced from 27GB to ~7GB).
+also, can you also add a font size slider to the custom tab?

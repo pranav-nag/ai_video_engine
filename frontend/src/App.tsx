@@ -4,11 +4,23 @@ import { Terminal } from "@/components/Terminal"
 import { VideoComposer } from "@/components/VideoComposer"
 import { Toaster } from "@/components/ui/toaster"
 import { useToast } from "@/hooks/use-toast"
+import { Switch } from "@/components/ui/switch"
+import { Label } from "@/components/ui/label"
 
 interface LogMessage {
     text: string
     color: string
     timestamp: string
+}
+
+export interface Clip {
+    filename: string
+    path: string
+    thumbnail?: string
+    score?: number
+    source_path?: string
+    start_time?: number
+    end_time?: number
 }
 
 export interface VideoConfig {
@@ -24,14 +36,37 @@ export interface VideoConfig {
     output_bitrate: string
     start_time: string
     end_time: string
+    use_b_roll: boolean
+    use_split_screen: boolean
     custom_style: boolean
+    stroke_enabled: boolean
+    back_enabled: boolean
+    stroke_width: number
+    back_alpha: number
+    outline_color: string
+    back_color: string
     custom_config: {
         font: string
         primary_color: string
         highlight_color: string
-        outline_color: string
-        back_color: string
     }
+}
+
+// Helper: Convert Hex (#RRGGBB) to ASS BGR (&H00BBGGRR)
+const hexToAss = (hex: string) => {
+    hex = hex.replace("#", "");
+    if (hex.length === 3) {
+        hex = hex.split('').map(c => c + c).join('');
+    }
+    if (hex.length !== 6) return "&H00FFFFFF";
+    
+    const r = hex.substring(0, 2);
+    const g = hex.substring(2, 4);
+    const b = hex.substring(4, 6);
+    
+    // ASS Format: &H[Alpha][Blue][Green][Red]
+    // We assume fully opaque (00) for now, user can tweak alpha in advanced if needed
+    return `&H00${b}${g}${r}`;
 }
 
 function App() {
@@ -49,16 +84,23 @@ function App() {
         start_time: "0",
         end_time: "",
         custom_style: false,
+        stroke_enabled: false,
+        back_enabled: false,
+        stroke_width: 3,
+        back_alpha: 0.5,
+        outline_color: "#000000",
+        back_color: "#000000",
         custom_config: {
             font: "Arial",
             primary_color: "#FFFFFF",
-            highlight_color: "#00FF00",
-            outline_color: "#000000",
-            back_color: "#000000"
-        }
+            highlight_color: "#00FF00"
+        },
+        use_b_roll: true,
+        use_split_screen: true
     })
     const [logs, setLogs] = useState<LogMessage[]>([])
     const [progress, setProgress] = useState(0)
+    const [progressPhase, setProgressPhase] = useState<{name: string, percent: number, text: string} | null>(null)
     const [isProcessing, setIsProcessing] = useState(false)
     const [isFetchingMetadata, setIsFetchingMetadata] = useState(false)
     const [videoMetadata, setVideoMetadata] = useState<{title: string, duration: number} | null>(null)
@@ -93,7 +135,37 @@ function App() {
                     } else if (data.type === "progress") {
                         setProgress(data.progress * 100);
                     } else if (data.type === "clip_ready") {
-                        setClips(prev => [...prev, { filename: data.title, path: data.path }]);
+                        setClips(prev => [...prev, { 
+                            filename: data.title, 
+                            path: data.path,
+                            thumbnail: data.thumbnail,
+                            score: data.score,
+                            source_path: data.source_path,
+                            start_time: data.start_time,
+                            end_time: data.end_time
+                        }]);
+                    } else if (data.type === "status") {
+                        // NEW: Handle pipeline status updates
+                        if (data.state === "success") {
+                            setIsProcessing(false)
+                            setProgress(100)
+                            toast({ title: "Process Complete", description: "All clips generated successfully.", className: "bg-green-900 border-green-800 text-green-100" })
+                        } else if (data.state === "error") {
+                            setIsProcessing(false)
+                            toast({ title: "Process Failed", description: data.message, variant: "destructive" })
+                        } else if (data.state === "cancelled") {
+                            setIsProcessing(false)
+                            setProgress(0)
+                            setProgressPhase(null)
+                            toast({ title: "Cancelled", description: "Operation was cancelled by user.", className: "bg-orange-900 border-orange-800 text-orange-100" })
+                        }
+                    } else if (data.type === "progress_rich") {
+                        setProgress(data.progress * 100);
+                        setProgressPhase({
+                            name: data.phase,
+                            percent: data.phase_progress * 100,
+                            text: data.text
+                        });
                     }
                 } catch (e) {
                     console.error("WS Parse Error", e);
@@ -166,20 +238,43 @@ function App() {
                     content_type: config.content_type,
                     focus_region: config.focus_mode,
                     caption_pos: config.caption_pos,
+                    caption_size: config.caption_size,
                     output_bitrate: config.output_bitrate,
                     start_time: config.start_time,
                     end_time: config.end_time,
+                    use_b_roll: config.use_b_roll,
+                    use_split_screen: config.use_split_screen,
                     // Parse resolution string to backend format if needed, or backend handles it
                     output_resolution: config.resolution.includes("x") ? config.resolution : "1080x1920", 
                     
-                    // If custom style is enabled, pass the config
+                    // If custom style is enabled, pass the full config, otherwise just overrides
                     custom_config: config.custom_style ? {
                         Fontname: config.custom_config.font,
-                        PrimaryColour: config.custom_config.primary_color.replace("#", "&H00") + "FF", // Simple AAS mapping (BGR usually, but let's stick to simple hex for now)
-                        HighlightColour: config.custom_config.highlight_color.replace("#", "&H00") + "FF",
-                        OutlineColour: config.custom_config.outline_color.replace("#", "&H00") + "FF",
-                        BackColour: config.custom_config.back_color.replace("#", "&H00") + "FF",
-                    } : null
+                        PrimaryColour: hexToAss(config.custom_config.primary_color),
+                        HighlightColour: hexToAss(config.custom_config.highlight_color),
+                        OutlineColour: config.stroke_enabled 
+                            ? hexToAss(config.outline_color) 
+                            : "&H00000000",
+                        BackColour: config.back_enabled
+                            ? (() => {
+                                const hex = config.back_color.replace("#", "")
+                                const alpha = Math.floor((1 - config.back_alpha) * 255).toString(16).padStart(2, '0').toUpperCase()
+                                return `&H${alpha}${hex.slice(4,6)}${hex.slice(2,4)}${hex.slice(0,2)}`
+                              })()
+                            : "&HFF000000",
+                        BorderStyle: config.back_enabled ? 3 : 1,
+                        Outline: config.stroke_enabled ? config.stroke_width : 0,
+                    } : {
+                        // Global overrides for presets
+                        OutlineColour: config.stroke_enabled ? hexToAss(config.outline_color) : undefined,
+                        BackColour: config.back_enabled ? (() => {
+                            const hex = config.back_color.replace("#", "")
+                            const alpha = Math.floor((1 - config.back_alpha) * 255).toString(16).padStart(2, '0').toUpperCase()
+                            return `&H${alpha}${hex.slice(4,6)}${hex.slice(2,4)}${hex.slice(0,2)}`
+                        })() : undefined,
+                        ...(config.back_enabled ? { BorderStyle: 3 } : { BorderStyle: 1 }),
+                        Outline: config.stroke_enabled ? config.stroke_width : 0
+                    }
                 })
             })
             
@@ -222,9 +317,10 @@ function App() {
                 isFetchingMetadata={isFetchingMetadata}
                 videoMetadata={videoMetadata}
                 progress={progress}
+                progressPhase={progressPhase}
             />
             
-            <main className="ml-[480px] min-h-screen flex flex-col relative transition-all duration-300 ease-in-out">
+            <main className="ml-[500px] min-h-screen flex flex-col relative transition-all duration-300 ease-in-out">
                 <div className="flex-1 p-8 overflow-y-auto">
                      <VideoComposer clips={clips} />
                 </div>

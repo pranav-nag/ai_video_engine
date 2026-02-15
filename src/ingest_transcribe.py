@@ -44,10 +44,40 @@ class VideoIngestor:
         """
         print(f"⬇️  Starting download for: {url} | Res: {resolution}p")
 
-        # 1. Cancellation Hook
+        # 1. Cancellation & Progress Hook
         def progress_hook(d):
             if cancel_event and cancel_event.is_set():
                 raise Exception("Download Cancelled by User")
+
+            if d["status"] == "downloading":
+                try:
+                    p = d.get("_percent_str", "0%").replace("%", "")
+                    speed = d.get("_speed_str", "N/A")
+                    # Log every 10% or so to avoid spamming
+                    # We can't easily track state here without a class var or closure,
+                    # so we'll just log if it ends in '0.0' or '5.0' roughly, or just rely on the logger's buffer?
+                    # Better: just log it if we have a logger.
+                    # But standard logger might be too slow for every update.
+                    # Let's filter in the hook.
+
+                    # Hacky but effective: check if the first decimal digit is 0 (approx every 10% if formatting matches)
+                    # changing to just 20% intervals + finish
+                    pct = float(p)
+                    if int(pct) % 20 == 0 and int(pct) > 0:
+                        msg = f"⬇️  Downloading: {pct:.1f}% ({speed})"
+                        # Only print/log if we haven't seen this integer percent yet?
+                        # Actually print is fine, logger might broadcast.
+                        print(msg, end="\r")
+                        if logger and int(pct) % 20 == 0:  # Reduce WS traffic
+                            # We need a way to not spam.
+                            # Let's just log 0, 20, 40, 60, 80, 100
+                            pass
+                except Exception:
+                    pass
+
+            if d["status"] == "finished":
+                if logger:
+                    logger.log("⬇️  Download 100% Complete", "blue")
 
         # 0. FETCH METADATA (Duration) for Strategy Decision
         total_duration, _ = self.get_video_info(url)
@@ -145,7 +175,7 @@ class VideoIngestor:
                 return filename, title
         except Exception as e:
             if cancel_event and cancel_event.is_set():
-                print(f"🛑 Download Cancelled.")
+                print("🛑 Download Cancelled.")
                 return None, None
             print(f"❌ Download Error: {e}")
             return None, None
@@ -197,7 +227,7 @@ class Transcriber:
             base_dir = os.path.dirname(os.path.abspath(__file__))
             self.root_dir = os.path.dirname(base_dir)
 
-    def transcribe(self, video_path, logger=None):
+    def transcribe(self, video_path, logger=None, cancel_event=None):
         """
         Primary transcription method — uses SUBPROCESS ISOLATION by default.
 
@@ -206,9 +236,11 @@ class Transcriber:
         Running Whisper in a subprocess lets the OS reclaim GPU memory on
         process exit, completely avoiding the destructor crash.
         """
-        return self.transcribe_subprocess(video_path, logger=logger)
+        return self.transcribe_subprocess(
+            video_path, logger=logger, cancel_event=cancel_event
+        )
 
-    def transcribe_subprocess(self, video_path, logger=None):
+    def transcribe_subprocess(self, video_path, logger=None, cancel_event=None):
         """
         Runs Whisper transcription in a SEPARATE PROCESS to avoid CTranslate2
         CUDA destructor segfault. Results are passed via a temporary JSON file.
@@ -279,6 +311,21 @@ class Transcriber:
                             for k in ["[WORKER]", "Processing", "Transcribing", "%"]
                         ):
                             logger.log(line, "INFO")
+
+                # Check for cancellation
+                if cancel_event and cancel_event.is_set():
+                    print("🛑 Transcription cancelled by user.", flush=True)
+                    if logger:
+                        logger.log(
+                            "🛑 Cancellation received. Terminating transcriber...",
+                            "WARNING",
+                        )
+                    process.terminate()
+                    try:
+                        process.wait(timeout=5)
+                    except subprocess.TimeoutExpired:
+                        process.kill()
+                    return []
 
             # Wait for completion
             return_code = process.wait(timeout=600)

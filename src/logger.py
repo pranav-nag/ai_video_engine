@@ -85,7 +85,9 @@ class VideoLogger:
 
             self.info(f"🔄 Log file renamed to: {new_filename}")
         except Exception as e:
-            print(f"Failed to rename log file: {e}")
+            # On Windows, file locking is common. This is not a critical error.
+            # We just fall back to the old filename.
+            print(f"⚠️ Log rename locked: {e}. Keeping original filename.")
             # Fallback: Re-open the OLD file so logging can continue
             if self.current_log_file:
                 try:

@@ -1,14 +1,17 @@
 import os
 import time
 import threading
+import gc
 from dotenv import load_dotenv
 
 # Import our AI Modules
 from src.ingest_transcribe import VideoIngestor, Transcriber
-from src.analyzer import analyze_transcript
+from src.analyzer import analyze_transcript, ensure_ollama_running
 from src.cropper import SmartCropper
 from src.renderer import VideoRenderer
 from src.logger import VideoLogger
+from src.caption_enhancer import CaptionEnhancer
+from src.layout_engine import LayoutEngine
 
 # Load Environment Variables
 load_dotenv()
@@ -28,6 +31,8 @@ def run_ai_pipeline(
     output_bitrate,
     output_resolution,
     content_type,
+    use_b_roll=True,
+    use_split_screen=True,
     custom_config=None,
     logger=None,
     progress_callback=None,
@@ -41,17 +46,46 @@ def run_ai_pipeline(
         logger = VideoLogger()
         logger.setup("Headless_Pipeline")
 
+    # Lower process priority to prevent UI freeze
+    try:
+        import psutil
+
+        p = psutil.Process(os.getpid())
+        p.nice(psutil.BELOW_NORMAL_PRIORITY_CLASS)
+        logger.log("📉 Process priority set to BELOW_NORMAL to prevent UI lag.", "INFO")
+    except Exception as e:
+        logger.log(f"⚠️ Could not set process priority: {e}", "WARNING")
+
     if not cancel_event:
         cancel_event = threading.Event()
 
+    start_time_all = time.time()
+
     def update_progress(p, msg):
+        elapsed = time.time() - start_time_all
+        eta = 0
+        if p > 0.05:  # Only estimate after some progress
+            total_est = elapsed / p
+            eta = max(0, total_est - elapsed)
+
         if progress_callback:
             progress_callback(p, msg)
-        logger.info(f"[PROGRESS {int(p * 100)}%] {msg}")
+
+        # Log with ETA
+        eta_msg = f" | ETA: {int(eta // 60)}m {int(eta % 60)}s" if eta > 0 else ""
+        logger.info(f"[PROGRESS {int(p * 100)}%] {msg}{eta_msg}")
 
     video_path = None
 
     try:
+        # 0. PRE-FLIGHT CHECKS
+        update_progress(0.01, "Checking System Health...")
+        try:
+            ensure_ollama_running()
+        except Exception as e:
+            logger.log(f"❌ System Check Failed: {e}", "red")
+            raise e
+
         # 1. DOWNLOAD
         update_progress(0.05, f"Initializing engine ({content_type})...")
         time.sleep(0.1)
@@ -64,6 +98,7 @@ def run_ai_pipeline(
         logger.log(f"🎯 Focus Mode: {focus_region.upper()}", color="cyan")
 
         ingestor = VideoIngestor()
+        logger.log(f"⬇️  Starting download from {url}", "blue")  # Log start
         video_path, video_title = ingestor.download(
             url,
             start_time,
@@ -89,7 +124,10 @@ def run_ai_pipeline(
 
         try:
             transcriber = Transcriber()
-            words = transcriber.transcribe(video_path, logger=logger)
+            logger.log("🎙️  Initializing Whisper Model...", "purple")
+            words = transcriber.transcribe(
+                video_path, logger=logger, cancel_event=cancel_event
+            )
             print(f"[PIPELINE] Transcription complete. Words: {len(words)}", flush=True)
         except Exception as transcribe_err:
             logger.log(f"❌ Transcription failed: {transcribe_err}", color="red")
@@ -97,6 +135,16 @@ def run_ai_pipeline(
 
         print("[PIPELINE] Waiting for GPU to stabilize...", flush=True)
         time.sleep(2)
+
+        # CLEANUP after Transcribe
+        gc.collect()
+        try:
+            import torch
+
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+        except Exception:
+            pass
 
         # 3. AI ANALYSIS
         update_progress(0.5, "AI Analyzing for Viral Moments...")
@@ -107,15 +155,32 @@ def run_ai_pipeline(
         def ai_progress(status_msg):
             update_progress(0.55, status_msg)
 
-        clips, scenes = analyze_transcript(
-            words,
-            min_sec=min_sec,
-            max_sec=max_sec,
-            logger=logger,
-            video_path=video_path,
-            progress_callback=ai_progress,
-            content_type=content_type,
-        )
+        try:
+            clips, scenes = analyze_transcript(
+                words,
+                min_sec=min_sec,
+                max_sec=max_sec,
+                logger=logger,
+                video_path=video_path,
+                progress_callback=ai_progress,
+                content_type=content_type,
+            )
+        except ConnectionError as e:
+            logger.log(str(e), "red")
+            raise e
+        except Exception as e:
+            logger.log(f"❌ Analysis failed: {e}", "red")
+            raise e
+
+        # CLEANUP after Analysis
+        gc.collect()
+        try:
+            import torch
+
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+        except Exception:
+            pass
 
         if not clips:
             logger.log("⚠️ No viral clips found.", color="orange")
@@ -125,7 +190,28 @@ def run_ai_pipeline(
         if cancel_event.is_set():
             return
 
-        # 4. SMART CROP
+        # 4. SMART CROP & LAYOUT ANALYSIS
+        update_progress(0.65, "Analyzing Video Layout (Solo vs Podcast)...")
+        if cancel_event.is_set():
+            return
+
+        if cancel_event.is_set():
+            return
+
+        # Determine Layout Mode (Active Speaker vs Split Screen)
+        layout_mode = "active_speaker"
+        layout_coords = None
+
+        if use_split_screen:
+            layout_engine = LayoutEngine()
+            layout_result = layout_engine.analyze_layout(video_path, logger=logger)
+            layout_mode = layout_result["layout_mode"]
+            layout_coords = layout_result["coords"]
+        else:
+            logger.log("⚙️ Split-Screen disabled by user preference.", "INFO")
+
+        update_progress(0.7, "Analyzing Face Movement...")
+
         update_progress(0.7, "Analyzing Face Movement...")
         if cancel_event.is_set():
             return
@@ -143,6 +229,12 @@ def run_ai_pipeline(
             focus_region=focus_region,
             scene_boundaries=scenes,
         )
+        logger.log(
+            f"📐 Smart Crop Analysis Complete. Scene count: {len(scenes)}", "cyan"
+        )
+
+        # CLEANUP after Crop
+        gc.collect()
 
         if cancel_event.is_set():
             return
@@ -188,7 +280,27 @@ def run_ai_pipeline(
                 if w["start"] >= clip["start"] and w["end"] <= clip["end"]
             ]
 
-            logger.log(f"🎞️ Rendering Clip {i + 1}...", color="blue")
+            # --- VISUAL ENHANCEMENT ---
+            # Apply colored keywords and emojis
+            enhancer = CaptionEnhancer()
+            clip["words"] = enhancer.enhance_transcript(clip["words"])
+
+            logger.log(
+                f"🎨 Enhanced captions for Clip {i + 1} (Power Words & Emojis)", "INFO"
+            )
+
+            # Validate that the clip has valid start/end times
+            if clip["end"] - clip["start"] < 1.0:
+                logger.log(
+                    f"⚠️ Clip {i + 1} is too short ({clip_duration:.1f}s), skipping.",
+                    "orange",
+                )
+                continue
+
+            logger.log(
+                f"🎞️ Rendering Clip {i + 1} (Score: {clip.get('score', 0):.1f})...",
+                color="blue",
+            )
 
             # Simple progress adapter for Proglog
             # We can't use FletProglog directly if it depends on UI controls,
@@ -200,7 +312,7 @@ def run_ai_pipeline(
                 def __init__(self, callback):
                     super().__init__(ui_callback=callback)
 
-            renderer.render_clip(
+            result = renderer.render_clip(
                 video_path,
                 clip,
                 crop_map,
@@ -215,16 +327,32 @@ def run_ai_pipeline(
                 logger=logger,
                 proglog_logger=SocketProglog(
                     callback=lambda p, m: update_progress(
-                        0.5 + (p * 0.5), f"Rendering Clip {i + 1}... {int(p * 100)}%"
+                        0.5 + ((i + (p if p else 0)) / len(clips) * 0.5),
+                        {
+                            "phase": "Rendering Engines",
+                            "phase_progress": p if p else 0,
+                            "text": f"Rendering Clip {i + 1} of {len(clips)}...",
+                        },
                     )
                 ),
+                layout_mode=layout_mode,
+                layout_coords=layout_coords,
+                use_b_roll=use_b_roll,
             )
 
-            generated_clips.append(output_path)
+            # Unpack the result from renderer
+            if isinstance(result, tuple):
+                output_path, thumbnail_path = result
+            else:
+                output_path = result
+                thumbnail_path = ""  # Fallback
+
             # Broadcast the new clip availability to Frontend
+            # Format: CLIP_READY:path|title|thumbnail|score
+            clip_score = clip.get("score", 0)
             update_progress(
-                0.5 + ((i + 1) / len(clips) * 0.5),
-                f"CLIP_READY:{output_path}|Clip {i + 1}",
+                0.8 + ((i + 1) / len(clips) * 0.2),
+                f"CLIP_READY:{output_path}|Clip {i + 1}|{thumbnail_path}|{clip_score}|{video_path}|{clip['start']}|{clip['end']}",
             )
 
         if not cancel_event.is_set():

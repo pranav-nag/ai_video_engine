@@ -1,7 +1,12 @@
 import os
+import psutil
 from moviepy.video.io.VideoFileClip import VideoFileClip
+from moviepy.video.compositing.CompositeVideoClip import clips_array
+from moviepy import concatenate_videoclips
 from moviepy.audio.AudioClip import CompositeAudioClip
 from moviepy.audio.io.AudioFileClip import AudioFileClip
+from moviepy.video.fx import Resize, Crop
+from moviepy.audio.fx import AudioFadeIn, AudioFadeOut
 from dotenv import load_dotenv
 from src.fast_caption import SubtitleGenerator
 from src.b_roll_manager import BRollManager
@@ -18,6 +23,17 @@ class VideoRenderer:
         if not os.path.exists(self.temp_dir):
             os.makedirs(self.temp_dir)
 
+    def _set_low_priority(self):
+        """Lowers process priority to keep system responsive during heavy rendering."""
+        try:
+            p = psutil.Process(os.getpid())
+            if os.name == "nt":
+                p.nice(psutil.BELOW_NORMAL_PRIORITY_CLASS)
+            else:
+                p.nice(10)  # Nice value 10 is lower priority
+        except Exception as e:
+            print(f"⚠️ Failed to set low priority: {e}")
+
     def render_clip(
         self,
         video_path,
@@ -33,15 +49,20 @@ class VideoRenderer:
         logger=None,
         proglog_logger=None,
         custom_config=None,  # NEW
+        layout_mode="active_speaker",  # NEW: "active_speaker" or "split_screen"
+        layout_coords=None,  # NEW: { "top": (x,y,w,h), "bottom": ... }
+        use_b_roll=True,  # NEW
     ):
+        # Apply low priority optimization
+        self._set_low_priority()
         """
         Renders a single viral clip with:
-        1. 9:16 Crop (Dynamic Center)
+        1. 9:16 Crop (Dynamic or Split Screen)
         2. ASS Subtitles (Karaoke + Pop)
         3. NVENC Acceleration (RTX 4060)
         4. B-Roll Overlay (when no face detected)
         """
-        msg = f"🎬 Initializing Render: {output_path} | Style: {style_name} | Font Size: {font_size}px"
+        msg = f"🎬 Starting Render for: {os.path.basename(output_path)} | Style: {style_name} | Font Size: {font_size}px"
         print(msg)
         if logger:
             logger.log(msg, "INFO", "BLUE")
@@ -109,11 +130,14 @@ class VideoRenderer:
                     gap_end_sec = len(face_detected) / fps
                     b_roll_intervals.append((gap_start_sec, gap_end_sec))
 
-            # 3. Fetch B-Roll for intervals
-            if b_roll_intervals:
+            # 3. Fetch B-Roll for intervals (No Face)
+            if b_roll_intervals and use_b_roll:
                 manager = BRollManager()
-                if manager.b_roll_files:
-                    msg = f"🎥 Found {len(b_roll_intervals)} 'No Face' segments. Inserting B-Roll..."
+                # We need to initialize manager once, ideally outside, but here is fine for now
+                if (
+                    manager.b_roll_files or manager.downloader
+                ):  # integrated downloader check
+                    msg = f"🎥 Found {len(b_roll_intervals)} 'No Face' segments. Inserting Filler B-Roll..."
                     print(msg)
                     if logger:
                         logger.log(msg, "INFO", "CYAN")
@@ -123,8 +147,61 @@ class VideoRenderer:
                         b_clip = manager.get_random_b_roll(b_dur)
                         if b_clip:
                             b_roll_clips.append(
-                                {"start": b_start, "end": b_end, "clip": b_clip}
+                                {
+                                    "start": b_start,
+                                    "end": b_end,
+                                    "clip": b_clip,
+                                    "type": "filler",
+                                }
                             )
+
+            # 4. KEYWORD B-ROLL (Power Words)
+            # Scan transcript for "Power Words" (colored words)
+            # We want to overlay B-Roll for 1.5s - 2.0s when these words occur
+            if "words" in clip_data and use_b_roll:
+                manager = BRollManager()
+                for word_info in clip_data["words"]:
+                    # Check if word has emphasis color (e.g. YELLOW, GREEN, etc)
+                    # The 'color' field comes from caption_enhancer
+                    if word_info.get("color") and word_info.get("word"):
+                        clean_word = word_info["word"].lower().strip(".,!?")
+                        # Heuristic: Only keywords > 3 chars
+                        if len(clean_word) > 3:
+                            # Avoid overlapping existing B-Roll
+                            w_start = word_info["start"]
+                            w_end = word_info["end"]
+                            # Define B-Roll duration (e.g. 2s or word duration + buffer)
+                            b_duration = max(2.0, w_end - w_start + 1.0)
+
+                            # Check overlap with existing b_roll_clips
+                            is_overlap = False
+                            for br in b_roll_clips:
+                                # Simple overlap check
+                                if (
+                                    w_start < br["end"]
+                                    and (w_start + b_duration) > br["start"]
+                                ):
+                                    is_overlap = True
+                                    break
+
+                            if not is_overlap:
+                                # Search/Download Stock
+                                stock_clip = manager.get_b_roll_for_keyword(
+                                    clean_word, b_duration, logger=logger
+                                )
+                                if stock_clip:
+                                    msg = f"🎞️ Inserting Stock Footage for keyword: '{clean_word}'"
+                                    print(msg)
+                                    if logger:
+                                        logger.log(msg, "INFO", "GREEN")
+                                    b_roll_clips.append(
+                                        {
+                                            "start": w_start,
+                                            "end": w_start + b_duration,
+                                            "clip": stock_clip,
+                                            "type": "keyword",
+                                        }
+                                    )
 
         # 3. Dynamic Per-Frame 9:16 Crop (follows face)
         src_w = original_clip.w
@@ -138,78 +215,173 @@ class VideoRenderer:
         # Pre-sort crop_map keys once for efficient interpolation
         _sorted_keys = sorted(crop_map.keys()) if crop_map else []
 
-        def _interpolate_crop_x(t):
-            """Find the best crop_x for absolute time t using crop_map."""
-            frame_idx = int(t * fps)
-            # Direct hit
-            if frame_idx in crop_map:
-                return crop_map[frame_idx]
-            if not _sorted_keys:
-                return default_crop_x
-            # Binary search for bracketing keys
-            lo, hi = 0, len(_sorted_keys) - 1
-            while lo < hi:
-                mid = (lo + hi) // 2
-                if _sorted_keys[mid] < frame_idx:
-                    lo = mid + 1
-                else:
-                    hi = mid
-            # Interpolate between neighbors
-            if lo == 0:
-                return crop_map[_sorted_keys[0]]
-            if lo >= len(_sorted_keys):
-                return crop_map[_sorted_keys[-1]]
-            k_before = _sorted_keys[lo - 1]
-            k_after = _sorted_keys[lo]
-            if k_after == k_before:
-                return crop_map[k_before]
-            ratio = (frame_idx - k_before) / (k_after - k_before)
-            val = crop_map[k_before] + ratio * (crop_map[k_after] - crop_map[k_before])
-            val = int(val)
-            return max(0, min(val, src_w - crop_w))
+        # 3.4 CROP & RESIZE (The Magic Sauce)
 
-        def dynamic_crop(get_frame, t):
-            """Per-frame crop that follows the face, OR returns B-Roll."""
-            # Check B-Roll Overlays first
-            for br in b_roll_clips:
-                if br["start"] <= t < br["end"]:
-                    # Get frame from B-Roll clip
-                    # relative time in b-roll
-                    b_t = t - br["start"]
-                    try:
-                        return br["clip"].get_frame(b_t)
-                    except Exception:
-                        pass  # Fallback to normal crop if b-roll fails
+        # --- SPLIT SCREEN LOGIC ---
+        if layout_mode == "split_screen" and layout_coords:
+            msg = "⚡ Applying Split-Screen Layout (Podcast Mode)"
+            print(msg)
+            if logger:
+                logger.log(msg, "INFO", "PURPLE")
 
-            # Normal Face Tracking Crop
-            frame = get_frame(t)
-            abs_t = start_t + t
-            cx = _interpolate_crop_x(abs_t)
-            # Boundary clamp
-            cx = max(0, min(cx, frame.shape[1] - crop_w))
-            return frame[:, cx : cx + crop_w]
+            # Helper to create a static crop
+            def make_crop(coords):
+                x, y, w, h = coords
+                # Crop
+                c = clip.cropped(x1=x, y1=y, width=w, height=h)
+                # Resize to target half-height (1080x960)
+                # 9:16 = 1080x1920. Half is 1080x960.
+                c = c.with_effects([Resize(height=960)])
 
-        cropped_clip = clip.transform(dynamic_crop)
-        # MoviePy 2.x: set the output dimensions after transform
-        cropped_clip = cropped_clip.with_effects(
-            []
-        )  # apply empty effects to refresh internals
-        cropped_clip.size = (crop_w, src_h)
+                # Center crop to 1080 width if needed
+                if c.w > 1080:
+                    c = c.with_effects([Crop(x_center=c.w / 2, width=1080)])
+                # If too narrow, pad? Or resize width?
+                # Better: Allow resizing to fill width 1080, then crop height?
+                # Let's just resize to width 1080 to be safe
+                c = c.with_effects([Resize(width=1080)])
+                # Then crop height to 960
+                c = c.with_effects([Crop(y_center=c.h / 2, height=960)])
+                return c
 
-        # 3.5 Apply Resolution Scaling (if requested)
-        if output_resolution != "source":
-            try:
-                out_w, out_h = map(int, output_resolution.split("x"))
-                cropped_clip = cropped_clip.resized((out_w, out_h))
-                msg = f"📐 Scaled to {out_w}x{out_h}"
-                print(msg)
-                if logger:
-                    logger.log(msg, "INFO")
-            except Exception as e:
-                msg = f"⚠️ Resolution scaling failed: {e} — using source size"
-                print(msg)
-                if logger:
-                    logger.error(msg)
+            top_clip = make_crop(layout_coords["top"])
+            bottom_clip = make_crop(layout_coords["bottom"])
+
+            # Stack Vertically
+            cropped_clip = clips_array([[top_clip], [bottom_clip]])
+            cropped_clip.size = (1080, 1920)  # Enforce
+
+        else:
+            # --- SOLO / ACTIVE SPEAKER LOGIC (Legacy) ---
+
+            # Smart Face Tracking
+            # Interpolate crop_x for smooth movement
+            # _sorted_keys is already defined above
+            # fps is already defined above
+
+            def _interpolate_crop_x(abs_t):
+                """Find the best crop_x for absolute time t using crop_map."""
+                frame_idx = int(abs_t * fps)  # Use the fps derived from original_clip
+                # Direct hit
+                if frame_idx in crop_map:
+                    return crop_map[frame_idx]
+                if not _sorted_keys:
+                    return default_crop_x
+                # Binary search for bracketing keys
+                lo, hi = 0, len(_sorted_keys) - 1
+                while lo < hi:
+                    mid = (lo + hi) // 2
+                    if _sorted_keys[mid] < frame_idx:
+                        lo = mid + 1
+                    else:
+                        hi = mid
+                # Interpolate between neighbors
+                if lo == 0:
+                    return crop_map[_sorted_keys[0]]
+                if lo >= len(_sorted_keys):
+                    return crop_map[_sorted_keys[-1]]
+                k_before = _sorted_keys[lo - 1]
+                k_after = _sorted_keys[lo]
+                if k_after == k_before:
+                    return crop_map[k_before]
+                ratio = (frame_idx - k_before) / (k_after - k_before)
+                val = crop_map[k_before] + ratio * (
+                    crop_map[k_after] - crop_map[k_before]
+                )
+                val = int(val)
+                return max(0, min(val, src_w - crop_w))
+
+            def dynamic_crop(get_frame, t):
+                """Per-frame crop that follows the face, OR returns B-Roll."""
+                # Check B-Roll Overlays first
+                for br in b_roll_clips:
+                    if br["start"] <= t < br["end"]:
+                        # Get frame from B-Roll clip
+                        # relative time in b-roll
+                        b_t = t - br["start"]
+                        try:
+                            return br["clip"].get_frame(b_t)
+                        except Exception:
+                            pass  # Fallback to normal crop if b-roll fails
+
+                # Normal Face Tracking Crop
+                frame = get_frame(t)
+                abs_t = start_t + t
+                cx = _interpolate_crop_x(abs_t)
+                # Boundary clamp
+                cx = max(0, min(cx, frame.shape[1] - crop_w))
+                return frame[:, cx : cx + crop_w]
+
+            cropped_clip = clip.transform(dynamic_crop)
+            # MoviePy 2.x: set the output dimensions after transform
+            cropped_clip = cropped_clip.with_effects(
+                []
+            )  # apply empty effects to refresh internals
+            cropped_clip.size = (crop_w, src_h)
+
+            # --- PHASE 8: DIGITAL ZOOMS (Safe Mode) ---
+            # Only apply if:
+            # 1. Clip duration > 5.0s (prevent motion sickness)
+            # 2. Not already very zoomed (check resolution? assume 1080 crop is fine)
+            # 3. No B-Roll currently covering it (too complex to check here, but dynamic_crop handles it)
+            # 4. layout_mode is NOT split_screen
+            if duration > 5.0 and layout_mode == "active_speaker":
+                try:
+                    # Split into 2 halves
+                    t_mid = duration * 0.5
+                    clip_a = cropped_clip.subclipped(0, t_mid)
+                    clip_b = cropped_clip.subclipped(t_mid, duration)
+
+                    # Zoom Part B by 1.15x
+                    # We need to scale UP, then center crop back to crop_w x src_h
+                    zoom_factor = 1.15
+                    new_w = int(crop_w * zoom_factor)
+                    new_h = int(src_h * zoom_factor)
+
+                    clip_b_zoomed = clip_b.with_effects(
+                        [Resize(width=new_w, height=new_h)]
+                    )
+                    # Center Crop back to original dimensions
+                    clip_b_final = clip_b_zoomed.with_effects(
+                        [
+                            Crop(
+                                x_center=new_w / 2,
+                                y_center=new_h / 2,
+                                width=crop_w,
+                                height=src_h,
+                            )
+                        ]
+                    )
+
+                    # Concatenate with crossfade? No, hard cut is surprisingly better for "punch ins"
+                    # But let's verify dimensions match exactly
+                    if clip_b_final.size == clip_a.size:
+                        msg = f"🔍 Applying Digital Zoom (Punch-in) at {t_mid:.1f}s"
+                        print(msg)
+                        if logger:
+                            logger.log(msg, "INFO")
+                        cropped_clip = concatenate_videoclips([clip_a, clip_b_final])
+                except Exception as e:
+                    print(f"⚠️ Digital Zoom Failed: {e}")
+                    if logger:
+                        logger.error(f"Digital Zoom Error: {e}")
+
+            # 3.5 Apply Resolution Scaling (only for solo mode really)
+            if output_resolution != "source":
+                try:
+                    out_w, out_h = map(int, output_resolution.split("x"))
+                    cropped_clip = cropped_clip.with_effects(
+                        [Resize(width=out_w, height=out_h)]
+                    )
+                    msg = f"📐 Scaled to {out_w}x{out_h}"
+                    print(msg)
+                    if logger:
+                        logger.log(msg, "INFO")
+                except Exception as e:
+                    msg = f"⚠️ Resolution scaling failed: {e} — using source size"
+                    print(msg)
+                    if logger:
+                        logger.error(msg)
 
         # 3.6 Background Music
         try:
@@ -247,9 +419,30 @@ class VideoRenderer:
                 print(msg)
                 if logger:
                     logger.log(msg, "INFO", "PURPLE")
-
         except Exception as e:
-            print(f"⚠️ Music Integration Failed: {e}")
+            pass
+
+        # --- PHASE 8: AUDIO POLISH (De-Clicking) ---
+        # Apply ultra-short fade in/out to prevent pops
+        if cropped_clip.audio:
+            cropped_clip = cropped_clip.with_effects(
+                [
+                    # MoviePy 2.x audio effects are applied via with_effects or directly on audio?
+                    # Actually audio_fadein is a method of AudioFileClip, but often exposed on VideoClip in v1.
+                    # In v2, it's safer to operate on .audio
+                    # BUT, .audio_fadein returning a new clip is standard.
+                    # Let's try the standard v1/v2 compatible way if available, else .audio.
+                ]
+            )
+            # Manual fade on audio track
+            try:
+                new_audio = cropped_clip.audio.with_effects(
+                    [AudioFadeIn(0.05), AudioFadeOut(0.05)]
+                )
+                cropped_clip.audio = new_audio
+            except Exception as e:
+                # Fallback or ignore if fails (not critical)
+                pass
 
         # 4. Generate ASS Subtitles
 
@@ -353,6 +546,19 @@ class VideoRenderer:
             print(msg)
             if logger:
                 logger.log(msg, "INFO", "GREEN")
+
+            # Generate Thumbnail
+            thumbnail_path = output_path.replace(".mp4", ".jpg")
+            try:
+                # Save frame from middle of clip
+                cropped_clip.save_frame(thumbnail_path, t=duration / 2)
+                if logger:
+                    logger.log(f"🖼️ Thumbnail generated: {thumbnail_path}", "INFO")
+            except Exception as e:
+                print(f"⚠️ Thumbnail generation failed: {e}")
+                thumbnail_path = ""
+
+            return output_path, thumbnail_path
 
         except Exception as e:
             msg = f"⚠️ NVENC Failed. Falling back to CPU... Error: {e}"

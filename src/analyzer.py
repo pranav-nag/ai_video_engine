@@ -11,7 +11,7 @@ from src.vision_analyzer import VisionAnalyzer
 load_dotenv()
 
 # Configuration
-OLLAMA_URL = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
+OLLAMA_URL = os.getenv("OLLAMA_BASE_URL", "http://127.0.0.1:11434")
 # UPDATED: Upgraded to Qwen 2.5 for better video/vision analysis on 8GB VRAM
 OLLAMA_MODEL = "qwen2.5:7b"
 # Default to 4096, but allow lower for 8GB VRAM cards
@@ -23,7 +23,8 @@ def ensure_ollama_running():
     """Checks if Ollama is running and ensures model is available (auto-pulls if missing)."""
     global OLLAMA_MODEL
     try:
-        response = requests.get(f"{OLLAMA_URL}/api/tags", timeout=2)
+        # UPDATED: Increased timeout to 10s and forced 127.0.0.1 to avoid Windows localhost ipv6 issues
+        response = requests.get(f"{OLLAMA_URL}/api/tags", timeout=10)
         if response.status_code == 200:
             models = [m["name"] for m in response.json().get("models", [])]
             print(f"✅ Ollama is running. Available models: {models}")
@@ -57,6 +58,7 @@ def ensure_ollama_running():
                         f"{OLLAMA_URL}/api/pull",
                         json={"name": OLLAMA_MODEL, "stream": True},
                         stream=True,
+                        timeout=300,  # 5 min timeout for pull
                     )
                     pull_resp.raise_for_status()
                     for line in pull_resp.iter_lines():
@@ -89,17 +91,58 @@ def ensure_ollama_running():
                     return False
             return True
         else:
-            print(f"❌ Ollama returned status {response.status_code}")
-            return False
+            msg = f"❌ Ollama returned status {response.status_code}"
+            print(msg)
+            raise ConnectionError(msg)
 
     except requests.exceptions.ConnectionError:
-        print(
-            "❌ Ollama is NOT running (Connection Refused). Please start the Ollama app."
-        )
-        return False
+        print("⏳ Ollama not running. Attempting to start it...")
+
+        # Try to start Ollama automatically
+        import shutil
+        import subprocess
+
+        ollama_path = shutil.which("ollama")
+        if ollama_path:
+            try:
+                # Start Ollama in the background
+                print(f"🚀 Starting Ollama from {ollama_path}...")
+                subprocess.Popen(
+                    ["ollama", "serve"],
+                    creationflags=subprocess.CREATE_NEW_CONSOLE,
+                    close_fds=True,
+                )
+
+                # Wait for it to spin up (up to 20 seconds)
+                print("⏳ Waiting for Ollama to initialize...")
+                for i in range(20):
+                    time.sleep(1)
+                    try:
+                        if (
+                            requests.get(
+                                f"{OLLAMA_URL}/api/tags", timeout=2
+                            ).status_code
+                            == 200
+                        ):
+                            print("✅ Ollama started and connected successfully!")
+                            return ensure_ollama_running()  # Recurse to check model
+                    except Exception:
+                        pass
+
+            except Exception as e:
+                print(f"❌ Failed to auto-start Ollama: {e}")
+        else:
+            print("❌ 'ollama' command not found in PATH.")
+
+        # Final check after auto-start attempt
+        msg = "❌ Ollama is NOT running (Connection Refused). Please check the console window that just opened, or start Ollama manually."
+        print(msg)
+        raise ConnectionError(msg)
+
     except Exception as e:
-        print(f"❌ Ollama check failed: {e}")
-        return False
+        msg = f"❌ Ollama check failed: {e}"
+        print(msg)
+        raise ConnectionError(msg)
 
 
 def unload_model(model_name):
@@ -107,9 +150,11 @@ def unload_model(model_name):
     try:
         # Keep-alive 0 triggers immediate unload
         requests.post(
-            f"{OLLAMA_URL}/api/chat", json={"model": model_name, "keep_alive": 0}
+            f"{OLLAMA_URL}/api/chat",
+            json={"model": model_name, "keep_alive": 0},
+            timeout=5,
         )
-        print(f"👋 Unloaded model: {model_name}")
+        print(f"👋 Unloaded model: {model_name} (Memory Freed)")
     except Exception as e:
         print(f"⚠️ Could not unload model {model_name}: {e}")
 
@@ -191,7 +236,7 @@ def snap_to_word_boundary(start, end, word_list, min_dur, max_dur):
     # 1. Snap END (Most Critical)
     # We want to finish the sentence. Look fast forward up to 8 seconds for a . or ?
     end_idx = find_idx(end)
-    original_end_idx = end_idx
+    # original_end_idx = end_idx # Removed unused variable
 
     found_end = False
     # Look forward (extension) first - prefer finishing the thought
@@ -235,7 +280,7 @@ def snap_to_word_boundary(start, end, word_list, min_dur, max_dur):
                     new_start = word_list[i + 1]["start"]
                     if (end - new_start) <= max_dur + 5.0:
                         start = new_start
-                        print(f"    ✨ Snapped START: Aligned to sentence start.")
+                        print("    ✨ Snapped START: Aligned to sentence start.")
                     break
 
     return start, end
@@ -356,10 +401,11 @@ def _build_system_prompt(content_type, min_sec, max_sec):
 
     # --- Scoring criteria (shared) ---
     score_criteria = (
-        "SCORE CRITERIA (0-100):\n"
-        "   - 90-100: VIRAL POTENTIAL. Would make someone stop scrolling and share immediately.\n"
-        "   - 75-89: Strong content. Engaging, clear, and worth watching.\n"
-        "   - < 75: Not compelling enough. Do NOT include.\n"
+        "VIRALITY PROBABILITY SCORE (0-100%):\n"
+        "   - This score represents the ESTIMATED PROBABILITY that this specific clip will go viral.\n"
+        "   - 90-100: Very High Probability (Must Post). Contains a perfect hook and emotional payoff.\n"
+        "   - 75-89: High Probability. Strong content that will perform well.\n"
+        "   - < 75: Low Probability. Do NOT include.\n"
     )
 
     # --- Output format (shared) ---
@@ -446,8 +492,8 @@ def analyze_transcript(
     Sends transcript to Ollama.
     Supports smart sematic snapping if transcript_input is a list of words.
     """
-    if not ensure_ollama_running():
-        return [], []
+    # Validates Ollama connection (raises specific error if fails)
+    ensure_ollama_running()
 
     # Handle Input Type
     word_list = []
@@ -697,7 +743,15 @@ def analyze_transcript(
                         else:
                             # Maybe the object itself is a clip? (Unlikely given prompt, but possible)
                             if "start" in obj and "end" in obj:
-                                extracted_clips.append(obj)
+                                # Standardize keys if LLM messed up
+                                if "score" not in obj:
+                                    obj["score"] = 70
+                                extract = {
+                                    k: v
+                                    for k, v in obj.items()
+                                    if k in ["start", "end", "score", "hook", "reason"]
+                                }
+                                extracted_clips.append(extract)
                     elif isinstance(obj, list):
                         extracted_clips.extend(obj)
 
@@ -789,73 +843,29 @@ def analyze_transcript(
                         if (target_end - current_start) < min_sec:
                             break
 
-                        # Snap the end to nearest sentence boundary
-                        if word_list:
-                            _, snapped_end = snap_to_word_boundary(
-                                current_start, target_end, word_list, min_sec, max_sec
-                            )
-                        else:
-                            snapped_end = target_end
+                        # Create sub-clip
+                        sub_clip = x.copy()
+                        sub_clip["start"] = current_start
+                        sub_clip["end"] = target_end
+                        sub_clip["duration_type"] = "split_part"
+                        sub_clip["hook"] = f"{x.get('hook', '')} (Part {part_num})"
 
-                        # Verify duration of this part
-                        part_dur = snapped_end - current_start
-                        if part_dur >= min_sec:
-                            # Add Part
-                            try:
-                                part_clip = {
-                                    "start": current_start,
-                                    "end": snapped_end,
-                                    "score": int(score)
-                                    if safe_float(score) is not None
-                                    else 0,
-                                    "hook": str(x.get("hook", "No Hook"))
-                                    + f" (Part {part_num})",
-                                    "reason": str(x.get("reason", "No reason provided"))
-                                    + " [Split from long segment]",
-                                    "duration_type": "series_part",
-                                }
-                                clips.append(part_clip)
-                                print(f"    ➕ Added Part {part_num}: {part_dur:.1f}s")
-                                part_num += 1
-                            except (ValueError, TypeError):
-                                pass
+                        clips.append(sub_clip)
+                        current_start = target_end
+                        part_num += 1
 
-                        # Next part starts where this one ended
-                        current_start = snapped_end
+                # 4. Handle Valid Clip
+                elif final_dur >= min_sec - 5.0:  # Allow slightly under min
+                    # Update the clip with snapped values
+                    x["start"] = final_s
+                    x["end"] = final_e
+                    x["score"] = int(score) if score else 70
+                    clips.append(x)
 
-                        # Safety break if no progress
-                        if current_start >= final_e or part_dur <= 0:
-                            break
-
-                    # Done splitting this long clip, continue to next
-                    continue
-
-                # 4. Final Validation (Normal Clip)
-                if final_dur < min_sec or final_dur > max_sec + 5.0:
-                    print(
-                        f"⚠️ Skipping clip (invalid duration {final_dur:.1f}s not in {min_sec}-{max_sec}s): {x.get('hook', 'Unknown')}"
-                    )
-                    continue
-
-                # Force to float/int
-                try:
-                    cleaned_clip = {
-                        "start": final_s,
-                        "end": final_e,
-                        "score": int(score) if safe_float(score) is not None else 0,
-                        "hook": str(x.get("hook", "No Hook")),
-                        "reason": str(x.get("reason", "No reason provided")),
-                        "duration_type": str(x.get("duration_type", "unknown")),
-                    }
-                    clips.append(cleaned_clip)
-                except (ValueError, TypeError):
-                    continue
-
-        # Sort by score (Robustly)
-        clips.sort(key=lambda x: x["score"], reverse=True)
+        # Sort by Score
+        clips.sort(key=lambda x: x.get("score", 0), reverse=True)
         top_clips = clips[:5]
 
-        # --- VISION ANALYSIS (Hybrid Scoring) ---
         # --- VISION ANALYSIS (Hybrid Scoring) ---
         if video_path and os.path.exists(video_path):
             try:
@@ -982,7 +992,7 @@ def analyze_transcript(
 
         msg = f"❌ Analysis Error: {e}"
         print(msg)
-        print(f"\n{'=' * 60}\nDETAILED ERROR:\n{'=' * 60}\n{error_trace}\n{'=' * 60}\n")
+        # print(f"\n{'=' * 60}\nDETAILED ERROR:\n{'=' * 60}\n{error_trace}\n{'=' * 60}\n")
 
         if logger:
             logger.error(msg)
@@ -994,12 +1004,16 @@ def analyze_transcript(
                     logger.log(line, "ERROR")
 
         # If possible, show what failed
-        if "response_text" in locals() and response_text:
-            print(f"📄 Raw Output was: {response_text[:200]}...")
-            if logger:
-                logger.log(f"Raw Ollama Output: {response_text[:500]}", "INFO")
+        # if "response_text" in locals() and response_text:
+        #    if logger:
+        #        logger.log(f"Raw Ollama Output: {response_text[:500]}", "INFO")
 
-        return [], []
+        return [], scenes
+
+    finally:
+        # CRITICAL: Always unload model to free VRAM for rendering
+        # Note: Vision model is unloaded in its own block, but we ensure text model is gone too.
+        unload_model(OLLAMA_MODEL)
 
 
 if __name__ == "__main__":

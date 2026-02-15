@@ -1,6 +1,7 @@
 import os
 import random
 from moviepy.video.io.VideoFileClip import VideoFileClip
+from src.stock_loader import StockDownloader
 
 
 class BRollManager:
@@ -13,25 +14,45 @@ class BRollManager:
                 for f in os.listdir(asset_dir)
                 if f.lower().endswith((".mp4", ".mov"))
             ]
+        self.downloader = StockDownloader(asset_dir)
 
-    def get_random_b_roll(self, duration, target_resolution=(1080, 1920)):
+    def get_b_roll_for_keyword(self, keyword, duration, logger=None):
         """
-        Returns a VideoFileClip of the requested duration.
-        If the source is shorter, it loops.
-        It resizes/crops to fill the target resolution.
+        Finds or downloads B-Roll for a specific keyword.
         """
-        if not self.b_roll_files:
+        # 1. Search Local
+        matches = [
+            f
+            for f in self.b_roll_files
+            if keyword.lower() in os.path.basename(f).lower()
+        ]
+
+        file_path = None
+        if matches:
+            file_path = random.choice(matches)
+        else:
+            # 2. auto-Download
+            file_path = self.downloader.download_stock(keyword, logger=logger)
+            if file_path:
+                self.b_roll_files.append(file_path)  # Cache it
+
+        if not file_path:
             return None
 
-        # Pick random file
-        file_path = random.choice(self.b_roll_files)
+        return self._process_clip(file_path, duration)
 
+    def _process_clip(self, file_path, duration, target_resolution=(1080, 1920)):
+        """Helper to load and process a clip"""
         try:
             clip = VideoFileClip(file_path)
+            # ... (reuse existing resizing logic) ...
+            # Actually, let's just refactor get_random_b_roll to use this too
+            return self._resize_and_loop(clip, duration, target_resolution)
         except Exception as e:
             print(f"⚠️ Failed to load B-Roll {file_path}: {e}")
             return None
 
+    def _resize_and_loop(self, clip, duration, target_resolution):
         # Loop if needed
         if clip.duration < duration:
             clip = clip.loop(duration=duration)
@@ -65,3 +86,14 @@ class BRollManager:
             clip = clip.cropped(y1=y_center - target_h / 2, height=target_h)
 
         return clip.with_effects([])  # Ensure valid clip
+
+    def get_random_b_roll(self, duration, target_resolution=(1080, 1920)):
+        """
+        Returns a VideoFileClip of the requested duration.
+        """
+        if not self.b_roll_files:
+            return None
+
+        # Pick random file
+        file_path = random.choice(self.b_roll_files)
+        return self._process_clip(file_path, duration, target_resolution)
